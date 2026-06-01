@@ -1,0 +1,107 @@
+---
+// 🎈 Children's Day Banner — June 1st
+// Remove after June 1st by deleting this component and its import in index.astro
+---
+
+<div class="childrens-day-banner">
+  <div class="banner-inner">
+    <div class="banner-emojis" aria-hidden="true">
+      <span class="emoji float-1">🎈</span>
+      <span class="emoji float-2">🪁</span>
+      <span class="emoji float-3">🎈</span>
+    </div>
+
+    <div class="banner-content" data-lang="en">
+      <span class="banner-text">Happy Children's Day!</span>
+      <span class="banner-sub">May every young Go player enjoy the game! 🎲⚫⚪</span>
+    </div>
+    <div class="banner-content" data-lang="zh">
+      <span class="banner-text">六一快乐！🎈</span>
+      <span class="banner-sub">祝每一位小棋手节日快乐，棋艺进步！⚫⚪</span>
+    </div>
+
+    <div class="banner-emojis banner-emojis-right" aria-hidden="true">
+      <span class="emoji float-2">🎈</span>
+      <span class="emoji float-3">🪁</span>
+      <span class="emoji float-1">🎈</span>
+    </div>
+  </div>
+</div>
+
+<style>
+  .childrens-day-banner {
+    position: fixed;
+    top: 64px; /* below navbar */
+    left: 0;
+    right: 0;
+    z-index: 40;
+    background: linear-gradient(135deg, #ff6b9d 0%, #ffa751 50%, #ffe259 100%);
+    padding: 10px 16px;
+    animation: slideDown 0.6s ease-out;
+  }
+
+  .banner-inner {
+    max-width: 72rem;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    position: relative;
+  }
+
+  .banner-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+
+  .banner-text {
+    font-size: 1.125rem;
+    font-weight: 700;
+    color: #fff;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+    letter-spacing: 0.02em;
+  }
+
+  .banner-sub {
+    font-size: 0.8rem;
+    color: rgba(255, 255, 255, 0.9);
+    text-shadow: 0 1px 1px rgba(0, 0, 0, 0.1);
+  }
+
+  .banner-emojis {
+    display: flex;
+    gap: 4px;
+    font-size: 1.25rem;
+  }
+
+  .banner-emojis-right {
+    /* mirror of left side */
+  }
+
+  .emoji {
+    display: inline-block;
+  }
+
+  .float-1 { animation: floatE 3s ease-in-out infinite; }
+  .float-2 { animation: floatE 3s ease-in-out 0.5s infinite; }
+  .float-3 { animation: floatE 3s ease-in-out 1s infinite; }
+
+  @keyframes floatE {
+    0%, 100% { transform: translateY(0) rotate(0deg); }
+    50% { transform: translateY(-4px) rotate(5deg); }
+  }
+
+  @keyframes slideDown {
+    from { transform: translateY(-100%); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+
+  @media (max-width: 640px) {
+    .banner-text { font-size: 0.95rem; }
+    .banner-sub { font-size: 0.7rem; }
+    .banner-emojis { display: none; }
+  }
+</style>
