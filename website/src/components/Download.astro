@@ -1,0 +1,74 @@
+---
+import { translations } from "../i18n/translations";
+const t = translations;
+---
+
+<section id="download" class="py-24 px-6">
+  <div class="max-w-4xl mx-auto">
+    <!-- EN header -->
+    <div data-lang="en">
+      <h2 class="text-3xl md:text-4xl font-bold text-center mb-3">{t.en.download.title}</h2>
+      <p class="text-text-secondary text-center mb-16">{t.en.download.subtitle}</p>
+    </div>
+    <!-- ZH header -->
+    <div data-lang="zh">
+      <h2 class="text-3xl md:text-4xl font-bold text-center mb-3">{t.zh.download.title}</h2>
+      <p class="text-text-secondary text-center mb-16">{t.zh.download.subtitle}</p>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <!-- macOS -->
+      <div class="reveal rounded-2xl p-8 bg-bg-card border border-teal/30 relative overflow-hidden">
+        <div class="absolute top-0 right-0 w-32 h-32 bg-teal/5 rounded-full -translate-y-1/2 translate-x-1/2"></div>
+        <div class="relative">
+          <svg class="w-10 h-10 text-text-primary mb-4" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+          </svg>
+          <h3 class="text-lg font-semibold mb-1">{t.en.download.macos}</h3>
+          <p class="text-sm text-text-muted mb-6" data-lang="en">{t.en.download.macosNote}</p>
+          <p class="text-sm text-text-muted mb-6" data-lang="zh">{t.zh.download.macosNote}</p>
+          <a
+            href="https://github.com/Neonity2020/go-game/releases/latest"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-teal hover:bg-teal-light text-white font-medium text-sm transition-all shadow-lg shadow-teal/20"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            <span data-lang="en">{t.en.download.macosBtn}</span>
+            <span data-lang="zh">{t.zh.download.macosBtn}</span>
+          </a>
+        </div>
+      </div>
+
+      <!-- Windows -->
+      <div class="reveal rounded-2xl p-8 bg-bg-card border border-border opacity-60">
+        <svg class="w-10 h-10 text-text-muted mb-4" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M3 12V6.75l8-1.25V12H3zm0 .5h8v6.5l-8-1.25V12.5zM11.5 5.38l9.5-1.63V12h-9.5V5.38zm0 7.12h9.5v8.25l-9.5-1.63V12.5z"/>
+        </svg>
+        <h3 class="text-lg font-semibold mb-1 text-text-secondary">{t.en.download.windows}</h3>
+        <p class="text-sm text-text-muted mb-6" data-lang="en">{t.en.download.windowsNote}</p>
+        <p class="text-sm text-text-muted mb-6" data-lang="zh">{t.zh.download.windowsNote}</p>
+        <span class="inline-flex items-center px-5 py-2.5 rounded-xl border border-border text-text-muted text-sm cursor-not-allowed" data-lang="en">{t.en.download.windowsBtn}</span>
+        <span class="inline-flex items-center px-5 py-2.5 rounded-xl border border-border text-text-muted text-sm cursor-not-allowed" data-lang="zh">{t.zh.download.windowsBtn}</span>
+      </div>
+
+      <!-- Linux -->
+      <div class="reveal rounded-2xl p-8 bg-bg-card border border-border opacity-60">
+        <svg class="w-10 h-10 text-text-muted mb-4" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M12.504 0c-.155 0-.311.015-.466.046C9.95.584 8.682 2.691 8.903 4.788c.22 2.1 1.89 3.726 3.967 3.726 .155 0 .311-.015.466-.046 2.088-.538 3.356-2.645 3.135-4.742C16.25 1.626 14.581 0 12.504 0zM15.49 8.17c-1.424-.001-2.794.654-3.692 1.74-1.213 1.467-1.535 3.608-.817 5.383 .766 1.89 2.586 3.113 4.577 3.113 .36 0 .72-.046 1.072-.137 1.78-.46 3.148-1.916 3.56-3.786 .412-1.87-.246-3.828-1.698-5.035C17.59 8.545 16.547 8.17 15.49 8.17zM7.896 9.596c-.483 0-.967.086-1.434.26-1.71.637-2.942 2.26-3.15 4.136-.208 1.877.644 3.718 2.183 4.7.62.395 1.316.593 2.012.593 .483 0 .967-.086 1.434-.26 1.71-.637 2.942-2.26 3.15-4.136.208-1.877-.644-3.718-2.183-4.7-.62-.395-1.316-.593-2.012-.593z"/>
+        </svg>
+        <h3 class="text-lg font-semibold mb-1 text-text-secondary">{t.en.download.linux}</h3>
+        <p class="text-sm text-text-muted mb-6" data-lang="en">{t.en.download.linuxNote}</p>
+        <p class="text-sm text-text-muted mb-6" data-lang="zh">{t.zh.download.linuxNote}</p>
+        <span class="inline-flex items-center px-5 py-2.5 rounded-xl border border-border text-text-muted text-sm cursor-not-allowed" data-lang="en">{t.en.download.linuxBtn}</span>
+        <span class="inline-flex items-center px-5 py-2.5 rounded-xl border border-border text-text-muted text-sm cursor-not-allowed" data-lang="zh">{t.zh.download.linuxBtn}</span>
+      </div>
+    </div>
+
+    <!-- Source link -->
+    <div class="mt-8 text-center text-sm text-text-muted">
+      <span data-lang="en">{t.en.download.sourceNote} <a href="https://github.com/Neonity2020/go-game/releases" target="_blank" rel="noopener noreferrer" class="text-teal hover:text-teal-light transition-colors">{t.en.download.sourceLink}</a></span>
+      <span data-lang="zh">{t.zh.download.sourceNote} <a href="https://github.com/Neonity2020/go-game/releases" target="_blank" rel="noopener noreferrer" class="text-teal hover:text-teal-light transition-colors">{t.zh.download.sourceLink}</a></span>
+    </div>
+  </div>
+</section>

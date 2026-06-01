@@ -1,4 +1,4 @@
-# Go Game
+# React Go
 
 React + TypeScript + Vite 围棋 Web UI，支持双人对弈、人机对弈、猜先、手顺记录、形势估算和 KataGo 本地引擎接入。
 

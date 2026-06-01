@@ -1,6 +1,6 @@
 [package]
-name = "go-game"
-version = "0.0.0"
+name = "react-go"
+version = "0.1.0"
 description = "Go game desktop application"
 authors = ["Go Game Contributors"]
 edition = "2021"
