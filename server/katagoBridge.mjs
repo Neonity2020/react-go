@@ -206,7 +206,38 @@ function sendGtp(command, timeoutMs = 60_000) {
   });
 }
 
-async function getMove(state, komi) {
+const MOVE_DIFFICULTY_CONFIG = {
+  beginner: { durationMs: 180, topN: 8, temperature: 1.4 },
+  normal: { durationMs: 350, topN: 5, temperature: 0.9 },
+  advanced: { durationMs: 650, topN: 3, temperature: 0.45 },
+  strongest: { durationMs: 0, topN: 1, temperature: 0 },
+};
+
+function getMoveDifficultyConfig(difficulty) {
+  return MOVE_DIFFICULTY_CONFIG[difficulty] ?? MOVE_DIFFICULTY_CONFIG.normal;
+}
+
+function pickAnalysisMove(moves, config) {
+  const candidates = moves
+    .filter(move => move.gtpMove && move.gtpMove.toLowerCase() !== 'resign')
+    .slice(0, config.topN);
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1 || config.temperature <= 0) return candidates[0];
+
+  const weights = candidates.map((move, index) => {
+    const visits = Math.max(1, move.visits || 1);
+    return Math.pow(visits, config.temperature) / (index + 1);
+  });
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  let target = Math.random() * total;
+  for (let i = 0; i < candidates.length; i++) {
+    target -= weights[i];
+    if (target <= 0) return candidates[i];
+  }
+  return candidates[0];
+}
+
+async function getMove(state, komi, difficulty = 'normal') {
   const boardSize = state?.boardSize;
   const currentPlayer = state?.currentPlayer;
   const moves = state?.moveRecords;
@@ -224,6 +255,13 @@ async function getMove(state, komi) {
 
   for (const move of moves) {
     await sendGtp(`play ${toGtpColor(move.player)} ${toGtpCoord(move.position, boardSize)}`);
+  }
+
+  const difficultyConfig = getMoveDifficultyConfig(difficulty);
+  if (difficultyConfig !== MOVE_DIFFICULTY_CONFIG.strongest) {
+    const analysis = await getAnalysis(state, komi, difficultyConfig.durationMs);
+    const selectedMove = pickAnalysisMove(analysis.moves, difficultyConfig);
+    if (selectedMove) return fromGtpCoord(selectedMove.gtpMove, boardSize);
   }
 
   const rawMove = await sendGtp(`genmove ${toGtpColor(currentPlayer)}`, 120_000);
@@ -419,7 +457,7 @@ const server = http.createServer(async (request, response) => {
     if (request.method === 'POST' && request.url === '/move') {
       const body = await readBody(request);
       const payload = JSON.parse(body);
-      const result = await enqueue(() => getMove(payload.state, Number(payload.komi)));
+      const result = await enqueue(() => getMove(payload.state, Number(payload.komi), payload.difficulty));
       sendJson(response, 200, { engine: 'katago', result });
       return;
     }

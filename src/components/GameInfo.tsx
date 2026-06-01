@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import Board from './Board';
-import type { GameState, MoveRecord, Position, ScoreResult, Stone, AnalysisResult, AnalysisMove, SavedGame } from '../game/types';
+import type { GameState, MoveRecord, Position, ScoreResult, Stone, AnalysisResult, AnalysisMove, SavedGame, AIDifficulty } from '../game/types';
 import { calculateScore, createInitialState, getMaxHandicapStones, isValidMove, normalizeHandicap, pass, placeStone, resign, undo } from '../game/engine';
 import { getKataGoMove, getKataGoAnalysis, getKataGoSetupStatus, installKataGoRuntime, type KataGoSetupStatus } from '../game/katagoClient';
 import { playStoneSound, playCaptureSound, startBgm, stopBgm } from '../game/audio';
@@ -18,6 +18,12 @@ type NigiriState =
 const BOARD_SIZES = [9, 13, 19] as const;
 const DEFAULT_KOMI = 6.5;
 const BOARD_LETTERS = 'ABCDEFGHJKLMNOPQRST';
+const AI_DIFFICULTIES: { value: AIDifficulty; label: string }[] = [
+  { value: 'beginner', label: '入门' },
+  { value: 'normal', label: '普通' },
+  { value: 'advanced', label: '进阶' },
+  { value: 'strongest', label: '最强' },
+];
 
 const STORAGE_KEY = 'go_game_history';
 
@@ -78,6 +84,10 @@ function aiEngineLabel(engine: AIEngine) {
   return engine === 'katago' ? 'KataGo' : '本地 AI';
 }
 
+function aiDifficultyLabel(difficulty: AIDifficulty) {
+  return AI_DIFFICULTIES.find(item => item.value === difficulty)?.label ?? '普通';
+}
+
 function handicapLabel(handicap: number) {
   return handicap > 0 ? `让${handicap}子` : '互先';
 }
@@ -86,6 +96,7 @@ export default function GameApp() {
   const [gameState, setGameState] = useState<GameState>(createInitialState(19));
   const [gameMode, setGameMode] = useState<GameMode>('pvp');
   const [aiEngine, setAiEngine] = useState<AIEngine>('katago');
+  const [aiDifficulty, setAiDifficulty] = useState<AIDifficulty>('normal');
   const [humanColor, setHumanColor] = useState<Stone>('black');
   const [nigiri, setNigiri] = useState<NigiriState>({ status: 'idle' });
   const [aiThinking, setAiThinking] = useState(false);
@@ -507,7 +518,7 @@ export default function GameApp() {
     aiRequestIdRef.current = requestId;
 
     if (aiEngine === 'katago') {
-      getKataGoMove(gameState, komi)
+      getKataGoMove(gameState, komi, aiDifficulty)
         .then(result => {
           if (requestId !== aiRequestIdRef.current) return;
           applyAIResult(result);
@@ -515,13 +526,13 @@ export default function GameApp() {
         .catch(() => {
           if (requestId !== aiRequestIdRef.current) return;
           setNotice('KataGo bridge 未连接，已改用本地 AI');
-          workerRef.current?.postMessage({ id: requestId, state: gameState });
+          workerRef.current?.postMessage({ id: requestId, state: gameState, difficulty: aiDifficulty });
         });
       return;
     }
 
-    workerRef.current?.postMessage({ id: requestId, state: gameState });
-  }, [aiEngine, applyAIResult, gameState, isAiTurn, komi]);
+    workerRef.current?.postMessage({ id: requestId, state: gameState, difficulty: aiDifficulty });
+  }, [aiDifficulty, aiEngine, applyAIResult, gameState, isAiTurn, komi]);
 
   const statusText = () => {
     if (isReviewMode) {
@@ -533,7 +544,7 @@ export default function GameApp() {
       if (passCount >= 2) return `终局，${formatWinner(score, gameMode, humanColor)} ${scoreLead(score)} 目`;
       return `${playerLabel(opponentOf(currentPlayer), gameMode, humanColor)}获胜，对方认输`;
     }
-    if (aiThinking) return `${aiEngineLabel(aiEngine)} 正在计算`;
+    if (aiThinking) return `${aiEngineLabel(aiEngine)} · ${aiDifficultyLabel(aiDifficulty)} 正在计算`;
     return `${playerLabel(currentPlayer, gameMode, humanColor)}落子`;
   };
 
@@ -1011,6 +1022,20 @@ export default function GameApp() {
                 >
                   本地
                 </button>
+              </div>
+              <div className="option-label">难度</div>
+              <div className="segmented-control difficulty-control" role="group" aria-label="AI 难度">
+                {AI_DIFFICULTIES.map(item => (
+                  <button
+                    key={item.value}
+                    type="button"
+                    className={aiDifficulty === item.value ? 'active' : ''}
+                    onClick={() => setAiDifficulty(item.value)}
+                    disabled={aiThinking || katagoSetupLoading}
+                  >
+                    {item.label}
+                  </button>
+                ))}
               </div>
               <div className={`katago-setup ${katagoStatus?.ok ? 'ready' : 'missing'}`}>
                 <div>

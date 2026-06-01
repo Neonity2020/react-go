@@ -1,4 +1,4 @@
-import type { GameState, Position, AnalysisResult } from './types';
+import type { GameState, Position, AnalysisResult, AIDifficulty } from './types';
 
 export type KataGoMoveResult = Position | 'resign' | null;
 export type KataGoSetupStatus = {
@@ -60,7 +60,7 @@ export async function installKataGoRuntime(): Promise<KataGoSetupStatus> {
   return tauriInvoke<KataGoSetupStatus>('install_katago_runtime');
 }
 
-export async function getKataGoMove(state: GameState, komi: number): Promise<KataGoMoveResult> {
+export async function getKataGoMove(state: GameState, komi: number, difficulty: AIDifficulty = 'normal'): Promise<KataGoMoveResult> {
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 45_000);
 
@@ -68,7 +68,7 @@ export async function getKataGoMove(state: GameState, komi: number): Promise<Kat
     const response = await fetch(`${bridgeUrl()}/move`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ state, komi }),
+      body: JSON.stringify({ state, komi, difficulty }),
       signal: controller.signal,
     });
 

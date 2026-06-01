@@ -1,5 +1,6 @@
 export type Stone = 'black' | 'white';
 export type Position = { row: number; col: number };
+export type AIDifficulty = 'beginner' | 'normal' | 'advanced' | 'strongest';
 
 export interface MoveRecord {
   moveNumber: number;
