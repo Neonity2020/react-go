@@ -448,6 +448,10 @@ button:disabled {
   grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 
+.difficulty-control {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .segmented-control button {
   border: 1px solid rgba(55, 50, 43, 0.16);
   background: #f4f1eb;

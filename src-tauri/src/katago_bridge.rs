@@ -8,7 +8,7 @@ use std::{
     process::{Child, ChildStdout, Command, Stdio},
     sync::{Arc, Mutex},
     thread,
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tauri::AppHandle;
 
@@ -418,7 +418,13 @@ fn handle_connection(
             Ok(payload) => bridge
                 .lock()
                 .map_err(|_| "KataGo bridge lock poisoned".to_string())
-                .and_then(|mut bridge| bridge.get_move(&payload.state, payload.komi.unwrap_or(6.5)))
+                .and_then(|mut bridge| {
+                    bridge.get_move(
+                        &payload.state,
+                        payload.komi.unwrap_or(6.5),
+                        payload.difficulty.as_deref().unwrap_or("normal"),
+                    )
+                })
                 .map(|result| json!({ "engine": "katago", "result": result })),
             Err(error) => Err(format!("Invalid JSON: {error}")),
         },
@@ -673,8 +679,24 @@ impl KataGoBridge {
         Ok(())
     }
 
-    fn get_move(&mut self, state: &GameStatePayload, komi: f64) -> Result<Value, String> {
+    fn get_move(
+        &mut self,
+        state: &GameStatePayload,
+        komi: f64,
+        difficulty: &str,
+    ) -> Result<Value, String> {
         self.setup_position(state, komi)?;
+        let difficulty_config = move_difficulty_config(difficulty);
+        if difficulty_config.duration_ms > 0 {
+            let analysis = self.get_analysis(state, komi, difficulty_config.duration_ms)?;
+            if let Some(selected_move) = pick_analysis_move(&analysis.moves, difficulty_config) {
+                return Ok(parsed_move_to_json(parse_gtp_move(
+                    &selected_move.gtp_move,
+                    state.board_size,
+                )?));
+            }
+        }
+
         let raw_move =
             self.send_gtp(&format!("genmove {}", to_gtp_color(&state.current_player)?))?;
         let first_token = raw_move.split_whitespace().next().unwrap_or("pass");
@@ -765,6 +787,7 @@ fn read_gtp_response(process: &mut KataGoProcess) -> Result<String, String> {
 struct MovePayload {
     state: GameStatePayload,
     komi: Option<f64>,
+    difficulty: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -815,6 +838,81 @@ struct AnalysisMove {
     #[serde(rename = "scoreLead")]
     score_lead: f64,
     pv: Vec<String>,
+}
+
+#[derive(Clone, Copy)]
+struct MoveDifficultyConfig {
+    duration_ms: u64,
+    top_n: usize,
+    temperature: f64,
+}
+
+fn move_difficulty_config(difficulty: &str) -> MoveDifficultyConfig {
+    match difficulty {
+        "beginner" => MoveDifficultyConfig {
+            duration_ms: 180,
+            top_n: 8,
+            temperature: 1.4,
+        },
+        "advanced" => MoveDifficultyConfig {
+            duration_ms: 650,
+            top_n: 3,
+            temperature: 0.45,
+        },
+        "strongest" => MoveDifficultyConfig {
+            duration_ms: 0,
+            top_n: 1,
+            temperature: 0.0,
+        },
+        _ => MoveDifficultyConfig {
+            duration_ms: 350,
+            top_n: 5,
+            temperature: 0.9,
+        },
+    }
+}
+
+fn random_unit() -> f64 {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.subsec_nanos())
+        .unwrap_or(0);
+    f64::from(nanos) / 1_000_000_000.0
+}
+
+fn pick_analysis_move<'a>(
+    moves: &'a [AnalysisMove],
+    config: MoveDifficultyConfig,
+) -> Option<&'a AnalysisMove> {
+    let candidates: Vec<&AnalysisMove> = moves
+        .iter()
+        .filter(|item| !item.gtp_move.eq_ignore_ascii_case("resign"))
+        .take(config.top_n)
+        .collect();
+    if candidates.is_empty() {
+        return None;
+    }
+    if candidates.len() == 1 || config.temperature <= 0.0 {
+        return candidates.first().copied();
+    }
+
+    let weights: Vec<f64> = candidates
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            let visits = item.visits.max(1) as f64;
+            visits.powf(config.temperature) / (index + 1) as f64
+        })
+        .collect();
+    let total: f64 = weights.iter().sum();
+    let mut target = random_unit() * total;
+    for (index, weight) in weights.iter().enumerate() {
+        target -= weight;
+        if target <= 0.0 {
+            return candidates.get(index).copied();
+        }
+    }
+    candidates.first().copied()
 }
 
 enum ParsedGtpMove {

@@ -1,4 +1,52 @@
-import type { GameState, Position, Stone } from './types';
+import type { AIDifficulty, GameState, Position, Stone } from './types';
+
+type DifficultyConfig = {
+  candidateLimit: number;
+  simsByBoardSize: Record<number, number>;
+  maxPlayoutByBoardSize: Record<number, number>;
+  randomLegalChance: number;
+  weightedCandidateChance: number;
+  resignThreshold: number;
+};
+
+const DIFFICULTY_CONFIG: Record<AIDifficulty, DifficultyConfig> = {
+  beginner: {
+    candidateLimit: 12,
+    simsByBoardSize: { 9: 8, 13: 5, 19: 3 },
+    maxPlayoutByBoardSize: { 9: 20, 13: 24, 19: 28 },
+    randomLegalChance: 0.22,
+    weightedCandidateChance: 0.45,
+    resignThreshold: 0,
+  },
+  normal: {
+    candidateLimit: 8,
+    simsByBoardSize: { 9: 40, 13: 20, 19: 10 },
+    maxPlayoutByBoardSize: { 9: 40, 13: 50, 19: 60 },
+    randomLegalChance: 0.04,
+    weightedCandidateChance: 0.16,
+    resignThreshold: 0.02,
+  },
+  advanced: {
+    candidateLimit: 10,
+    simsByBoardSize: { 9: 70, 13: 36, 19: 18 },
+    maxPlayoutByBoardSize: { 9: 55, 13: 70, 19: 85 },
+    randomLegalChance: 0.01,
+    weightedCandidateChance: 0.06,
+    resignThreshold: 0.015,
+  },
+  strongest: {
+    candidateLimit: 12,
+    simsByBoardSize: { 9: 110, 13: 56, 19: 28 },
+    maxPlayoutByBoardSize: { 9: 70, 13: 90, 19: 110 },
+    randomLegalChance: 0,
+    weightedCandidateChance: 0,
+    resignThreshold: 0.01,
+  },
+};
+
+function getDifficultyConfig(difficulty: AIDifficulty | undefined): DifficultyConfig {
+  return DIFFICULTY_CONFIG[difficulty ?? 'normal'] ?? DIFFICULTY_CONFIG.normal;
+}
 
 function getNeighbors(pos: Position, size: number): Position[] {
   const { row, col } = pos;
@@ -135,7 +183,7 @@ function playout(board: (Stone | null)[][], player: Stone, size: number, maxMove
   return estimateScore(b, size);
 }
 
-function getCandidates(board: (Stone | null)[][], player: Stone, size: number, koPoint: Position | null): Position[] {
+function getCandidates(board: (Stone | null)[][], player: Stone, size: number, koPoint: Position | null, limit: number): Position[] {
   const legal = getAllLegalMoves(board, player, size, koPoint);
   const opponent: Stone = player === 'black' ? 'white' : 'black';
   const moveNumber = board.flat().filter(s => s !== null).length;
@@ -172,7 +220,7 @@ function getCandidates(board: (Stone | null)[][], player: Stone, size: number, k
   });
 
   scored.sort((a, b) => b.p - a.p);
-  const topN = Math.min(8, scored.length);
+  const topN = Math.min(limit, scored.length);
   return scored.slice(0, topN).map(s => s.pos);
 }
 
@@ -182,12 +230,24 @@ function getStarMoves(size: number): Position[] {
   return [{ row:3,col:3 },{ row:3,col:9 },{ row:3,col:15 },{ row:9,col:3 },{ row:9,col:9 },{ row:9,col:15 },{ row:15,col:3 },{ row:15,col:9 },{ row:15,col:15 }];
 }
 
-type AIResult = Position | 'resign';
+type AIResult = Position | 'resign' | null;
 
-function computeAIMove(state: GameState): AIResult {
+function pickWeightedCandidate(candidates: Position[]): Position {
+  const weights = candidates.map((_, index) => 1 / (index + 1));
+  const total = weights.reduce((sum, weight) => sum + weight, 0);
+  let target = Math.random() * total;
+  for (let i = 0; i < candidates.length; i++) {
+    target -= weights[i];
+    if (target <= 0) return candidates[i];
+  }
+  return candidates[0];
+}
+
+function computeAIMove(state: GameState, difficulty?: AIDifficulty): AIResult {
   const { board, boardSize, currentPlayer, koPoint } = state;
+  const config = getDifficultyConfig(difficulty);
   const legalMoves = getAllLegalMoves(board, currentPlayer, boardSize, koPoint);
-  if (legalMoves.length === 0) return null as unknown as AIResult;
+  if (legalMoves.length === 0) return null;
 
   // Don't resign too early — need at least some moves to evaluate
   const minMovesBeforeResign = boardSize <= 9 ? 20 : boardSize <= 13 ? 30 : 40;
@@ -198,11 +258,19 @@ function computeAIMove(state: GameState): AIResult {
     return legalMoves[Math.floor(Math.random() * legalMoves.length)];
   }
 
-  const candidates = getCandidates(board, currentPlayer, boardSize, koPoint);
-  if (candidates.length === 0) return null as unknown as AIResult;
+  const candidates = getCandidates(board, currentPlayer, boardSize, koPoint, config.candidateLimit);
+  if (candidates.length === 0) return null;
 
-  const sims = boardSize <= 9 ? 40 : boardSize <= 13 ? 20 : 10;
-  const maxPlayout = boardSize <= 9 ? 40 : boardSize <= 13 ? 50 : 60;
+  if (Math.random() < config.randomLegalChance) {
+    return legalMoves[Math.floor(Math.random() * legalMoves.length)];
+  }
+
+  if (Math.random() < config.weightedCandidateChance) {
+    return pickWeightedCandidate(candidates);
+  }
+
+  const sims = config.simsByBoardSize[boardSize] ?? config.simsByBoardSize[19];
+  const maxPlayout = config.maxPlayoutByBoardSize[boardSize] ?? config.maxPlayoutByBoardSize[19];
   const opponent: Stone = currentPlayer === 'black' ? 'white' : 'black';
 
   let bestPos = candidates[0];
@@ -223,14 +291,14 @@ function computeAIMove(state: GameState): AIResult {
 
   // Resign if win rate is below 2% and enough moves have been played
   if (state.history.length >= minMovesBeforeResign && totalSims > 0) {
-    const winRate = bestWins / totalSims;
-    if (winRate < 0.02) return 'resign';
+    const winRate = bestWins / sims;
+    if (config.resignThreshold > 0 && winRate < config.resignThreshold) return 'resign';
   }
 
   return bestPos;
 }
 
-self.onmessage = (e: MessageEvent<{ id: number; state: GameState }>) => {
-  const result = computeAIMove(e.data.state);
+self.onmessage = (e: MessageEvent<{ id: number; state: GameState; difficulty?: AIDifficulty }>) => {
+  const result = computeAIMove(e.data.state, e.data.difficulty);
   self.postMessage({ id: e.data.id, result });
 };
