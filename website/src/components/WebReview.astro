@@ -53,6 +53,14 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
             <span data-lang="en">New web game</span>
             <span data-lang="zh">重新开始网页对局</span>
           </button>
+          <button
+            type="button"
+            id="review-pass"
+            class="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl border border-border text-text-secondary hover:text-text-primary hover:border-text-muted font-medium transition-all cursor-pointer"
+          >
+            <span data-lang="en">Pass</span>
+            <span data-lang="zh">虚手</span>
+          </button>
           <a
             href="https://github.com/Neonity2020/react-go/releases/latest"
             target="_blank"
@@ -183,6 +191,8 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
   let winrateHistory = [50];
   let aiThinking = false;
   let gameOver = false;
+  let koPoint = -1; // -1 means no ko
+  let passCount = 0; // consecutive passes
 
   const boardButton = document.getElementById("review-board");
   const reviewSection = document.getElementById("review");
@@ -254,11 +264,21 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
   }
 
   function placeStone(board, index, color) {
-    if (board[index] !== empty) return null;
+    if (index !== -1 && board[index] !== empty) return null;
+
+    // Pass move
+    if (index === -1) {
+      return { board: cloneBoard(board), koPoint: -1 };
+    }
+
+    // Ko rule: cannot recapture immediately
+    if (koPoint !== -1 && index === koPoint) return null;
 
     const nextBoard = cloneBoard(board);
     const opponent = color === black ? white : black;
     nextBoard[index] = color;
+    let capturedAny = false;
+    let newKoPoint = -1;
 
     neighbors(index).forEach((next) => {
       if (nextBoard[next] !== opponent) return;
@@ -267,17 +287,41 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
         target.group.forEach((stone) => {
           nextBoard[stone] = empty;
         });
+        capturedAny = true;
       }
     });
 
     const own = groupAndLiberties(nextBoard, index);
     if (own.liberties.size === 0) return null;
-    return nextBoard;
+
+    // Set ko point: single stone capture that creates ko
+    if (capturedAny) {
+      const opponent = color === black ? white : black;
+      let koCandidate = -1;
+      neighbors(index).forEach((next) => {
+        if (board[next] === opponent) {
+          const target = groupAndLiberties(nextBoard, next);
+          // Ko: exactly one liberty (the former stone position) and one stone
+          if (target.liberties.size === 1 && target.group.length === 1) {
+            const lib = [...target.liberties][0];
+            // The liberty should be the position we just played
+            if (lib === index) {
+              koCandidate = next;
+            }
+          }
+        }
+      });
+      if (koCandidate !== -1) {
+        newKoPoint = koCandidate;
+      }
+    }
+
+    return { board: nextBoard, koPoint: newKoPoint };
   }
 
   function scoreMoveShape(board, index, color) {
-    const played = placeStone(board, index, color);
-    if (!played) return -1000;
+    const result = placeStone(board, index, color);
+    if (!result) return -1000;
 
     const { x, y } = xyFromIndex(index);
     const opponent = color === black ? white : black;
@@ -289,13 +333,19 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
       if (board[next] === opponent) return sum + 0.18;
       return sum;
     }, 0);
-    const liberties = groupAndLiberties(played, index).liberties.size * 0.08;
+    const liberties = groupAndLiberties(result.board, index).liberties.size * 0.08;
     return center * 0.65 + star + edgePenalty + contact + liberties;
   }
 
-  function getLegalMoves(board, color) {
+  function getLegalMoves(board, color, currentKo = -1) {
     return Array.from({ length: boardSize * boardSize }, (_, i) => i)
-      .filter((i) => placeStone(board, i) !== null);
+      .filter((i) => {
+        const result = placeStone(board, i, color);
+        if (!result) return false;
+        // Exclude ko point from legal moves
+        if (currentKo !== -1 && i === currentKo) return false;
+        return true;
+      });
   }
 
   /** Simple territory scoring: stones + surrounded empty points */
@@ -344,16 +394,15 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
   }
 
   function checkGameEnd() {
-    const blackLegal = getLegalMoves(boardState, black);
-    const whiteLegal = getLegalMoves(boardState, white);
-    // Game ends when board is full or both sides have no legal moves
-    if (blackLegal.length === 0 && whiteLegal.length === 0) {
-      return true;
-    }
-    // Also end if board is nearly full (> 70 of 81 filled)
-    const filled = Array.from(boardState).filter((v) => v !== empty).length;
-    if (filled >= 70) return true;
+    // Game ends when both players pass consecutively
+    if (passCount >= 2) return true;
     return false;
+  }
+
+  function checkLegalMoves() {
+    const blackLegal = getLegalMoves(boardState, black, koPoint);
+    const whiteLegal = getLegalMoves(boardState, white, koPoint);
+    return { blackLegal, whiteLegal };
   }
 
   function endGame() {
@@ -448,7 +497,12 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
 
   async function updateAnalysis(color = black) {
     const legalIndices = Array.from({ length: boardSize * boardSize }, (_, index) => index)
-      .filter((index) => placeStone(boardState, index, color));
+      .filter((index) => {
+        const result = placeStone(boardState, index, color);
+        if (!result) return false;
+        if (koPoint !== -1 && index === koPoint) return false;
+        return true;
+      });
     const scores = await aiRuntime.analyze({
       board: boardState,
       color,
@@ -465,9 +519,10 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
   }
 
   function applyMove(index, color) {
-    const nextBoard = placeStone(boardState, index, color);
-    if (!nextBoard) return false;
-    boardState = nextBoard;
+    const result = placeStone(boardState, index, color);
+    if (!result) return false;
+    boardState = result.board;
+    koPoint = result.koPoint;
     moveHistory.push({ index, color });
     moveEl.textContent = String(moveHistory.length);
     renderStones();
@@ -479,12 +534,18 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     boardButton.disabled = true;
     statusEl.textContent = "KataGo thinking...";
     const result = await updateAnalysis(white);
-    const response = result.candidates.find((candidate) => placeStone(boardState, candidate.index, white));
+    const validResponse = result.candidates.find((candidate) => {
+      const r = placeStone(boardState, candidate.index, white);
+      if (!r) return false;
+      if (koPoint !== -1 && candidate.index === koPoint) return false;
+      return true;
+    });
 
-    if (response) {
-      applyMove(response.index, white);
-      pvEl.textContent = `White answered at ${response.point}`;
-      statusEl.textContent = `${aiRuntime.engineLabel()} played white at ${response.point}`;
+    if (validResponse) {
+      applyMove(validResponse.index, white);
+      pvEl.textContent = `White answered at ${validResponse.point}`;
+      statusEl.textContent = `${aiRuntime.engineLabel()} played white at ${validResponse.point}`;
+      passCount = 0;
       if (checkGameEnd()) {
         endGame();
       } else {
@@ -492,10 +553,12 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
       }
     } else {
       // AI has no legal move — pass
+      passCount++;
+      const { blackLegal } = checkLegalMoves();
       if (checkGameEnd()) {
         endGame();
       } else {
-        statusEl.textContent = "White passed — your turn";
+        statusEl.textContent = `White passed (${passCount}/2) — your turn`;
         pvEl.textContent = "White passed";
         await updateAnalysis(black);
       }
@@ -520,8 +583,26 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
       return;
     }
 
+    passCount = 0; // Reset pass counter on regular move
     pvEl.textContent = `Black played ${formatPoint(index)}`;
     statusEl.textContent = `You played ${formatPoint(index)}`;
+    if (checkGameEnd()) {
+      endGame();
+      return;
+    }
+    await playAiMove();
+  }
+
+  async function handlePass() {
+    if (aiThinking || gameOver) return;
+
+    passCount++;
+    moveHistory.push({ index: -1, color: black });
+    moveEl.textContent = String(moveHistory.length);
+    pvEl.textContent = "Black passed";
+    statusEl.textContent = `You passed (${passCount}/2)`;
+    renderStones();
+
     if (checkGameEnd()) {
       endGame();
       return;
@@ -549,6 +630,8 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     boardState = new Int8Array(boardSize * boardSize);
     moveHistory = [];
     winrateHistory = [50];
+    koPoint = -1;
+    passCount = 0;
     initialMoves.forEach((move) => {
       const index = indexOf(move.x, move.y);
       boardState[index] = move.color;
@@ -569,6 +652,8 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     hoverStone.setAttribute("cy", "-20");
   });
   newGameButton?.addEventListener("click", resetGame);
+  const passButton = document.getElementById("review-pass");
+  passButton?.addEventListener("click", handlePass);
   async function bootRuntime() {
     statusEl.textContent = "Starting TF.js engine...";
     await aiRuntime.init();
