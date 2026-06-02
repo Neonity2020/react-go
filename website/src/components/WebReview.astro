@@ -77,6 +77,10 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
             <span data-lang="zh">手数</span>
             <span id="review-move">0</span>
           </div>
+          <div id="komi-swap-hint" class="text-xs text-teal-light">
+            <span data-lang="en">Komi swap: place 2 stones</span>
+            <span data-lang="zh">猜先：请放置2颗棋子</span>
+          </div>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-[1fr_220px] gap-0">
@@ -190,10 +194,7 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
   const white = 2;
   const boardOrigin = 44;
   const gridStep = 39;
-  const initialMoves = [
-    { x: 4, y: 4, color: black },
-    { x: 2, y: 2, color: white },
-  ];
+  // Initial moves removed - komi swap starts with empty board
 
   const aiRuntime = createKatagoWebGpuRuntime();
   let boardState = new Int8Array(boardSize * boardSize);
@@ -203,6 +204,10 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
   let gameOver = false;
   let koPoint = -1; // -1 means no ko
   let passCount = 0; // consecutive passes
+  let playerColor = black; // Player plays black by default
+  let aiColor = white;
+  let gamePhase = "komi-swap"; // "komi-swap", "playing", "ended"
+  let komiSwapPositions = []; // Stores the two stones placed during komi swap
 
   const boardButton = document.getElementById("review-board");
   const reviewSection = document.getElementById("review");
@@ -215,6 +220,7 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
   const candidateGroup = document.getElementById("review-candidates");
   const candidateList = document.getElementById("review-candidate-list");
   const pvEl = document.getElementById("review-pv");
+  const komiSwapHint = document.getElementById("komi-swap-hint");
   const chartLine = document.getElementById("review-chart-line");
   const chartFill = document.getElementById("review-chart-fill");
   const hoverStone = document.getElementById("review-hover");
@@ -548,45 +554,44 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
   }
 
   async function playAiMove() {
-    if (gameOver) return;
+    if (gameOver || gamePhase !== "playing") return;
     aiThinking = true;
     boardButton.disabled = true;
     statusEl.textContent = "KataGo thinking...";
-    const result = await updateAnalysis(white);
+    const result = await updateAnalysis(aiColor);
     const validResponse = result.candidates.find((candidate) => {
-      const r = placeStone(boardState, candidate.index, white);
+      const r = placeStone(boardState, candidate.index, aiColor);
       if (!r) return false;
       if (koPoint !== -1 && candidate.index === koPoint) return false;
       return true;
     });
 
     if (validResponse) {
-      applyMove(validResponse.index, white);
-      pvEl.textContent = `White answered at ${validResponse.point}`;
-      statusEl.textContent = `${aiRuntime.engineLabel()} played white at ${validResponse.point}`;
+      applyMove(validResponse.index, aiColor);
+      const colorName = aiColor === black ? "Black" : "White";
+      pvEl.textContent = `${colorName} played ${validResponse.point}`;
+      statusEl.textContent = `${aiRuntime.engineLabel()} played ${validResponse.point}`;
       passCount = 0;
       if (checkGameEnd()) {
         endGame();
       } else {
-        await updateAnalysis(black);
+        await updateAnalysis(playerColor);
       }
     } else {
-      // AI has no legal move — check if it's a real pass or resign
       const bestCandidate = result.candidates[0];
-      // If best candidate has very low score, AI thinks it's lost
       if (!bestCandidate || bestCandidate.percent < 5) {
         aiThinking = false;
         aiResign();
         return;
       }
-      // Genuine pass - no legal moves available
       passCount++;
       if (checkGameEnd()) {
         endGame();
       } else {
-        statusEl.textContent = `White passed (${passCount}/2) — your turn`;
-        pvEl.textContent = "White passed";
-        await updateAnalysis(black);
+        const colorName = aiColor === black ? "Black" : "White";
+        statusEl.textContent = `${colorName} passed (${passCount}/2) — your turn`;
+        pvEl.textContent = `${colorName} passed`;
+        await updateAnalysis(playerColor);
       }
     }
 
@@ -594,8 +599,47 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     aiThinking = false;
   }
 
+  async function handleKomiSwap(x, y) {
+    const index = indexOf(x, y);
+    if (boardState[index] !== empty) {
+      statusEl.textContent = "Position occupied";
+      return;
+    }
+
+    boardState[index] = black;
+    komiSwapPositions.push(index);
+    moveHistory.push({ index, color: black });
+    moveEl.textContent = String(moveHistory.length);
+    renderStones();
+
+    if (komiSwapPositions.length === 1) {
+      statusEl.textContent = "Place second stone";
+    } else if (komiSwapPositions.length === 2) {
+      const playerIsWhite = Math.random() < 0.5;
+      if (playerIsWhite) {
+        playerColor = white;
+        aiColor = black;
+        boardState[komiSwapPositions[0]] = white;
+        boardState[komiSwapPositions[1]] = black;
+        statusEl.textContent = "You play white — AI plays first";
+        pvEl.textContent = "AI plays first";
+        renderStones();
+        await playAiMove();
+      } else {
+        playerColor = black;
+        aiColor = white;
+        statusEl.textContent = "You play black — place your first move";
+        pvEl.textContent = "Place your first move";
+        gamePhase = "playing";
+        komiSwapHint.style.display = "none";
+        await updateAnalysis(playerColor);
+      }
+    }
+  }
+
   async function handleBoardClick(event) {
     if (aiThinking || gameOver) return;
+
     const rect = boardButton.getBoundingClientRect();
     const boardX = ((event.clientX - rect.left) / rect.width) * 400;
     const boardY = ((event.clientY - rect.top) / rect.height) * 400;
@@ -604,13 +648,19 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) return;
 
     const index = indexOf(x, y);
-    if (!applyMove(index, black)) {
-      statusEl.textContent = "Illegal move: choose another point";
+
+    if (gamePhase === "komi-swap") {
+      await handleKomiSwap(x, y);
       return;
     }
 
-    passCount = 0; // Reset pass counter on regular move
-    pvEl.textContent = `Black played ${formatPoint(index)}`;
+    if (!applyMove(index, playerColor)) {
+      statusEl.textContent = "Illegal move";
+      return;
+    }
+
+    passCount = 0;
+    pvEl.textContent = `${playerColor === black ? "Black" : "White"} played ${formatPoint(index)}`;
     statusEl.textContent = `You played ${formatPoint(index)}`;
     if (checkGameEnd()) {
       endGame();
@@ -620,12 +670,12 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
   }
 
   async function handlePass() {
-    if (aiThinking || gameOver) return;
+    if (aiThinking || gameOver || gamePhase !== "playing") return;
 
     passCount++;
-    moveHistory.push({ index: -1, color: black });
+    moveHistory.push({ index: -1, color: playerColor });
     moveEl.textContent = String(moveHistory.length);
-    pvEl.textContent = "Black passed";
+    pvEl.textContent = `${playerColor === black ? "Black" : "White"} passed`;
     statusEl.textContent = `You passed (${passCount}/2)`;
     renderStones();
 
@@ -658,17 +708,16 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     winrateHistory = [50];
     koPoint = -1;
     passCount = 0;
-    initialMoves.forEach((move) => {
-      const index = indexOf(move.x, move.y);
-      boardState[index] = move.color;
-      moveHistory.push({ index, color: move.color });
-    });
-    moveEl.textContent = String(moveHistory.length);
-    pvEl.textContent = "Black to play";
+    playerColor = black;
+    aiColor = white;
+    gamePhase = "komi-swap";
+    komiSwapPositions = [];
+    moveEl.textContent = "0";
+    pvEl.textContent = "Komi swap: place 2 stones";
     statusEl.textContent = `${aiRuntime.engineLabel()} ready`;
+    komiSwapHint.style.display = "";
     renderStones();
     renderChart();
-    updateAnalysis(black);
   }
 
   boardButton?.addEventListener("click", handleBoardClick);
