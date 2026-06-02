@@ -419,6 +419,10 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     }
   }
 
+  function aiResign() {
+    resignGame(black);
+  }
+
   function endGame() {
     gameOver = true;
     boardButton.disabled = true;
@@ -544,10 +548,19 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
   }
 
   async function playAiMove() {
+    if (gameOver) return;
     aiThinking = true;
     boardButton.disabled = true;
     statusEl.textContent = "KataGo thinking...";
     const result = await updateAnalysis(white);
+
+    // AI resign check: if winrate is very low, resign
+    if (result.winrate < 10) {
+      aiThinking = false;
+      aiResign();
+      return;
+    }
+
     const validResponse = result.candidates.find((candidate) => {
       const r = placeStone(boardState, candidate.index, white);
       if (!r) return false;
@@ -568,7 +581,6 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     } else {
       // AI has no legal move — pass
       passCount++;
-      const { blackLegal } = checkLegalMoves();
       if (checkGameEnd()) {
         endGame();
       } else {
