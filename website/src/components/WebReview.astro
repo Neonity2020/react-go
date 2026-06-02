@@ -553,14 +553,6 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     boardButton.disabled = true;
     statusEl.textContent = "KataGo thinking...";
     const result = await updateAnalysis(white);
-
-    // AI resign check: if winrate is very low, resign
-    if (result.winrate < 10) {
-      aiThinking = false;
-      aiResign();
-      return;
-    }
-
     const validResponse = result.candidates.find((candidate) => {
       const r = placeStone(boardState, candidate.index, white);
       if (!r) return false;
@@ -579,7 +571,15 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
         await updateAnalysis(black);
       }
     } else {
-      // AI has no legal move — pass
+      // AI has no legal move — check if it's a real pass or resign
+      const bestCandidate = result.candidates[0];
+      // If best candidate has very low score, AI thinks it's lost
+      if (!bestCandidate || bestCandidate.percent < 5) {
+        aiThinking = false;
+        aiResign();
+        return;
+      }
+      // Genuine pass - no legal moves available
       passCount++;
       if (checkGameEnd()) {
         endGame();
