@@ -716,11 +716,17 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     playerColor = black;
     aiColor = white;
     gamePhase = "komi-swap";
+    gameOver = false;
+    aiThinking = false;
     komiSwapPositions = [];
     moveEl.textContent = "0";
+    winrateEl.textContent = "50.0%";
     pvEl.textContent = "Komi swap: place 2 stones";
     statusEl.textContent = `${aiRuntime.engineLabel()} ready`;
     komiSwapHint.style.display = "";
+    boardButton.disabled = false;
+    candidateGroup.innerHTML = "";
+    candidateList.innerHTML = "";
     renderStones();
     renderChart();
   }
