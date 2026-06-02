@@ -70,7 +70,7 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
           <div>
             <div class="font-semibold" data-lang="en">Web Game</div>
             <div class="font-semibold" data-lang="zh">网页对局</div>
-            <div id="webgpu-status" class="text-xs text-text-muted mt-1">Loading KataGo engine...</div>
+            <div id="webgpu-status" class="text-xs text-text-muted mt-1">Loading...</div>
           </div>
           <div class="px-3 py-1 rounded-full bg-teal/10 text-teal-light text-xs font-semibold">
             <span data-lang="en">Move</span>
@@ -181,556 +181,526 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
 
   // ============ Constants ============
   const BOARD_SIZE = 9;
-  const EMPTY = 0;
-  const BLACK = 1;
-  const WHITE = 2;
+  const EMPTY = null;
+  const BLACK = 'black';
+  const WHITE = 'white';
   const LABELS = "ABCDEFGHJ";
   const BOARD_ORIGIN = 44;
   const GRID_STEP = 39;
-  const KOMI = 5.5;
+  const KOMI = 6.5;
 
-  // ============ State ============
-  let boardState = new Int8Array(BOARD_SIZE * BOARD_SIZE);
-  let moveHistory = [];
-  let winrateHistory = [50];
-  let koPoint = -1;
-  let passCount = 0;
-  let playerColor = BLACK;
-  let aiColor = WHITE;
-  let gameOver = false;
-  let aiThinking = false;
-  let gamePhase = "komi-swap";
-  let komiSwapStones = [];
+  // ============ Types ============
+  type Stone = 'black' | 'white';
+  type Position = { row: number; col: number };
 
-  // ============ DOM Elements ============
-  const boardButton = document.getElementById("review-board");
-  const reviewSection = document.getElementById("review");
+  interface GameState {
+    board: (Stone | null)[][];
+    currentPlayer: Stone;
+    koPoint: Position | null;
+    passCount: number;
+    gameOver: boolean;
+    lastMove: Position | null;
+    playerColor: Stone;
+    aiColor: Stone;
+    moveNumber: number;
+  }
+
+  interface ScoreResult {
+    blackScore: number;
+    whiteScore: number;
+    winner: Stone | 'tie';
+  }
+
+  // ============ DOM ============
+  const boardButton = document.getElementById("review-board") as HTMLButtonElement;
+  const reviewSection = document.getElementById("review") as HTMLElement;
   const katagoModelUrl = reviewSection?.dataset.katagoModelUrl || "";
-  const newGameButton = document.getElementById("review-new-game");
-  const passButton = document.getElementById("review-pass");
-  const resignButton = document.getElementById("review-resign");
-  const statusEl = document.getElementById("webgpu-status");
-  const moveEl = document.getElementById("review-move");
-  const winrateEl = document.getElementById("review-winrate");
-  const stonesGroup = document.getElementById("review-stones");
-  const candidateGroup = document.getElementById("review-candidates");
-  const candidateList = document.getElementById("review-candidate-list");
-  const pvEl = document.getElementById("review-pv");
-  const chartLine = document.getElementById("review-chart-line");
-  const chartFill = document.getElementById("review-chart-fill");
-  const hoverStone = document.getElementById("review-hover");
+  const newGameButton = document.getElementById("review-new-game") as HTMLButtonElement;
+  const passButton = document.getElementById("review-pass") as HTMLButtonElement;
+  const resignButton = document.getElementById("review-resign") as HTMLButtonElement;
+  const statusEl = document.getElementById("webgpu-status") as HTMLElement;
+  const moveEl = document.getElementById("review-move") as HTMLElement;
+  const winrateEl = document.getElementById("review-winrate") as HTMLElement;
+  const stonesGroup = document.getElementById("review-stones") as SVGGElement;
+  const candidateGroup = document.getElementById("review-candidates") as SVGGElement;
+  const candidateList = document.getElementById("review-candidate-list") as HTMLDivElement;
+  const pvEl = document.getElementById("review-pv") as HTMLElement;
+  const chartLine = document.getElementById("review-chart-line") as SVGPathElement;
+  const chartFill = document.getElementById("review-chart-fill") as SVGPathElement;
+  const hoverStone = document.getElementById("review-hover") as SVGCircleElement;
 
   const aiRuntime = createKatagoWebGpuRuntime();
 
-  // ============ Utility Functions ============
-  function indexOf(x, y) {
-    return y * BOARD_SIZE + x;
+  // ============ State ============
+  let state: GameState = createEmptyState();
+
+  function createEmptyBoard(): (Stone | null)[][] {
+    return Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(EMPTY));
   }
 
-  function xyFromIndex(i) {
-    return { x: i % BOARD_SIZE, y: Math.floor(i / BOARD_SIZE) };
+  function cloneBoard(board: (Stone | null)[][]): (Stone | null)[][] {
+    return board.map(row => [...row]);
   }
 
-  function formatPoint(i) {
-    const { x, y } = xyFromIndex(i);
-    return `${LABELS[x]}${BOARD_SIZE - y}`;
+  function createEmptyState(): GameState {
+    return {
+      board: createEmptyBoard(),
+      currentPlayer: BLACK,
+      koPoint: null,
+      passCount: 0,
+      gameOver: false,
+      lastMove: null,
+      playerColor: BLACK,
+      aiColor: WHITE,
+      moveNumber: 0,
+    };
   }
 
-  function pixelFor(v) {
-    return BOARD_ORIGIN + v * GRID_STEP;
+  // ============ Position Utilities ============
+  function posKey(p: Position): string {
+    return `${p.row},${p.col}`;
   }
 
-  function neighbors(i) {
-    const { x, y } = xyFromIndex(i);
-    const result = [];
-    if (x > 0) result.push(i - 1);
-    if (x < BOARD_SIZE - 1) result.push(i + 1);
-    if (y > 0) result.push(i - BOARD_SIZE);
-    if (y < BOARD_SIZE - 1) result.push(i + BOARD_SIZE);
+  function getNeighbors(pos: Position): Position[] {
+    const { row, col } = pos;
+    const result: Position[] = [];
+    if (row > 0) result.push({ row: row - 1, col });
+    if (row < BOARD_SIZE - 1) result.push({ row: row + 1, col });
+    if (col > 0) result.push({ row, col: col - 1 });
+    if (col < BOARD_SIZE - 1) result.push({ row, col: col + 1 });
     return result;
   }
 
-  function getGroup(board, start) {
-    const color = board[start];
-    if (color === EMPTY) return { stones: [start], liberties: new Set([start]) };
+  function pixelFor(v: number): number {
+    return BOARD_ORIGIN + v * GRID_STEP;
+  }
 
-    const stones = [];
-    const liberties = new Set();
-    const seen = new Set([start]);
-    const queue = [start];
+  function formatPoint(pos: Position): string {
+    return `${LABELS[pos.col]}${BOARD_SIZE - pos.row}`;
+  }
+
+  // ============ Go Engine ============
+  function getGroup(board: (Stone | null)[][], pos: Position): Position[] {
+    const stone = board[pos.row][pos.col];
+    if (!stone) return [];
+
+    const visited = new Set<string>();
+    const group: Position[] = [];
+    const queue: Position[] = [pos];
 
     while (queue.length > 0) {
-      const curr = queue.pop();
-      stones.push(curr);
-      for (const n of neighbors(curr)) {
-        if (board[n] === EMPTY) {
-          liberties.add(n);
-        } else if (board[n] === color && !seen.has(n)) {
-          seen.add(n);
-          queue.push(n);
+      const current = queue.pop()!;
+      const key = posKey(current);
+      if (visited.has(key)) continue;
+      visited.add(key);
+      group.push(current);
+
+      for (const neighbor of getNeighbors(current)) {
+        const nKey = posKey(neighbor);
+        if (!visited.has(nKey) && board[neighbor.row][neighbor.col] === stone) {
+          queue.push(neighbor);
         }
       }
     }
-    return { stones, liberties };
+    return group;
   }
 
-  function isValidMove(board, i, color) {
-    if (i === -1) return true; // pass
-    if (board[i] !== EMPTY) return false;
-    if (koPoint !== -1 && i === koPoint) return false;
+  function getLiberties(board: (Stone | null)[][], group: Position[]): number {
+    const libertySet = new Set<string>();
+    for (const pos of group) {
+      for (const neighbor of getNeighbors(pos)) {
+        if (board[neighbor.row][neighbor.col] === EMPTY) {
+          libertySet.add(posKey(neighbor));
+        }
+      }
+    }
+    return libertySet.size;
+  }
+
+  function isValidMove(pos: Position): boolean {
+    const { board, currentPlayer, koPoint } = state;
+
+    if (pos.row < 0 || pos.row >= BOARD_SIZE || pos.col < 0 || pos.col >= BOARD_SIZE) return false;
+    if (board[pos.row][pos.col] !== EMPTY) return false;
+    if (koPoint && koPoint.row === pos.row && koPoint.col === pos.col) return false;
 
     // Simulate move
-    const next = new Int8Array(board);
-    next[i] = color;
-    const opp = color === BLACK ? WHITE : BLACK;
+    const newBoard = cloneBoard(board);
+    newBoard[pos.row][pos.col] = currentPlayer;
+    const opponent: Stone = currentPlayer === BLACK ? WHITE : BLACK;
 
-    // Capture opponent groups
-    for (const n of neighbors(i)) {
-      if (next[n] === opp) {
-        const g = getGroup(next, n);
-        if (g.liberties.size === 0) {
-          for (const s of g.stones) next[s] = EMPTY;
+    // Check captures
+    let captured = 0;
+    for (const neighbor of getNeighbors(pos)) {
+      if (newBoard[neighbor.row][neighbor.col] === opponent) {
+        const group = getGroup(newBoard, neighbor);
+        if (getLiberties(newBoard, group) === 0) {
+          captured += group.length;
+          for (const p of group) {
+            newBoard[p.row][p.col] = EMPTY;
+          }
         }
       }
     }
 
-    // Check suicide
-    const self = getGroup(next, i);
-    return self.liberties.size > 0;
+    // Suicide check (only if no captures)
+    if (captured === 0) {
+      const ownGroup = getGroup(newBoard, pos);
+      if (getLiberties(newBoard, ownGroup) === 0) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
-  function getLegalMoves(board, color) {
-    const moves = [];
-    for (let i = 0; i < BOARD_SIZE * BOARD_SIZE; i++) {
-      if (isValidMove(board, i, color)) {
-        moves.push(i);
+  function getLegalMoves(): Position[] {
+    const moves: Position[] = [];
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        if (isValidMove({ row: r, col: c })) {
+          moves.push({ row: r, col: c });
+        }
       }
     }
     return moves;
   }
 
-  function applyMove(i, color) {
-    if (i === -1) {
-      // Pass
-      koPoint = -1;
-      moveHistory.push({ i: -1, color });
-      return true;
-    }
+  function placeStone(pos: Position): boolean {
+    if (state.gameOver) return false;
+    if (!isValidMove(pos)) return false;
 
-    const next = new Int8Array(boardState);
-    next[i] = color;
-    const opp = color === BLACK ? WHITE : BLACK;
-    let captured = 0;
-    let capturedPos = -1;
+    const newBoard = cloneBoard(state.board);
+    newBoard[pos.row][pos.col] = state.currentPlayer;
+    const opponent: Stone = state.currentPlayer === BLACK ? WHITE : BLACK;
 
-    // Capture opponent groups
-    for (const n of neighbors(i)) {
-      if (next[n] === opp) {
-        const g = getGroup(next, n);
-        if (g.liberties.size === 0) {
-          for (const s of g.stones) {
-            next[s] = EMPTY;
-            captured++;
+    // Capture opponent stones
+    let capturedCount = 0;
+    let capturedSingle: Position | null = null;
+    for (const neighbor of getNeighbors(pos)) {
+      if (newBoard[neighbor.row][neighbor.col] === opponent) {
+        const group = getGroup(newBoard, neighbor);
+        if (getLiberties(newBoard, group) === 0) {
+          capturedCount += group.length;
+          if (group.length === 1) capturedSingle = neighbor;
+          for (const p of group) {
+            newBoard[p.row][p.col] = EMPTY;
           }
-          if (g.stones.length === 1) capturedPos = g.stones[0];
         }
       }
     }
 
-    // Check suicide
-    const self = getGroup(next, i);
-    if (self.liberties.size === 0) return false;
-
-    // Update ko point
-    koPoint = -1;
-    if (captured === 1 && capturedPos !== -1) {
-      const origGroup = getGroup(boardState, capturedPos);
-      if (origGroup.liberties.size === 1) {
-        koPoint = capturedPos;
+    // Ko detection
+    let koPoint: Position | null = null;
+    if (capturedCount === 1 && capturedSingle) {
+      const ownGroup = getGroup(newBoard, pos);
+      if (ownGroup.length === 1 && getLiberties(newBoard, ownGroup) === 1) {
+        koPoint = capturedSingle;
       }
     }
 
-    boardState = next;
-    moveHistory.push({ i, color });
+    state.board = newBoard;
+    state.koPoint = koPoint;
+    state.lastMove = pos;
+    state.passCount = 0;
+    state.currentPlayer = opponent;
+    state.moveNumber++;
+
     return true;
   }
 
-  function calculateScore() {
+  function passMove(): void {
+    if (state.gameOver) return;
+
+    state.passCount++;
+    state.koPoint = null;
+    state.lastMove = null;
+    state.currentPlayer = state.currentPlayer === BLACK ? WHITE : BLACK;
+
+    if (state.passCount >= 2) {
+      state.gameOver = true;
+    }
+  }
+
+  function calculateScore(): ScoreResult {
+    const board = state.board;
     let blackStones = 0;
     let whiteStones = 0;
     let blackTerritory = 0;
     let whiteTerritory = 0;
 
     // Count stones
-    for (let i = 0; i < BOARD_SIZE * BOARD_SIZE; i++) {
-      if (boardState[i] === BLACK) blackStones++;
-      else if (boardState[i] === WHITE) whiteStones++;
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        if (board[r][c] === BLACK) blackStones++;
+        else if (board[r][c] === WHITE) whiteStones++;
+      }
     }
 
-    // Count territory using flood fill
-    const visited = new Set();
-    for (let i = 0; i < BOARD_SIZE * BOARD_SIZE; i++) {
-      if (boardState[i] !== EMPTY || visited.has(i)) continue;
+    // Flood fill for territory
+    const visited = new Set<string>();
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        const key = `${r},${c}`;
+        if (board[r][c] !== EMPTY || visited.has(key)) continue;
 
-      const region = [];
-      const borders = new Set();
-      const queue = [i];
-      visited.add(i);
+        const region: Position[] = [];
+        const borders = new Set<Stone>();
+        const queue: Position[] = [{ row: r, col: c }];
+        visited.add(key);
 
-      while (queue.length > 0) {
-        const curr = queue.pop();
-        region.push(curr);
-        for (const n of neighbors(curr)) {
-          if (boardState[n] === EMPTY && !visited.has(n)) {
-            visited.add(n);
-            queue.push(n);
-          } else if (boardState[n] !== EMPTY) {
-            borders.add(boardState[n]);
+        while (queue.length > 0) {
+          const curr = queue.pop()!;
+          region.push(curr);
+          for (const nb of getNeighbors(curr)) {
+            const nbKey = posKey(nb);
+            if (board[nb.row][nb.col] === EMPTY && !visited.has(nbKey)) {
+              visited.add(nbKey);
+              queue.push(nb);
+            } else if (board[nb.row][nb.col] !== EMPTY) {
+              borders.add(board[nb.row][nb.col] as Stone);
+            }
           }
         }
-      }
 
-      if (borders.size === 1) {
-        const owner = [...borders][0];
-        if (owner === BLACK) blackTerritory += region.length;
-        else whiteTerritory += region.length;
-      }
-    }
-
-    return {
-      blackScore: blackStones + blackTerritory,
-      whiteScore: whiteStones + whiteTerritory + KOMI
-    };
-  }
-
-  // ============ Game Logic ============
-  function checkGameEnd() {
-    return passCount >= 2;
-  }
-
-  function endGame() {
-    gameOver = true;
-    gamePhase = "ended";
-    boardButton.disabled = true;
-    candidateGroup.innerHTML = "";
-    candidateList.innerHTML = "";
-
-    const { blackScore, whiteScore } = calculateScore();
-    const diff = blackScore - whiteScore;
-
-    if (playerColor === BLACK) {
-      if (diff > 0) {
-        statusEl.textContent = `You win! Black ${blackScore} vs White ${whiteScore.toFixed(1)}`;
-        pvEl.textContent = `🏆 Black wins by ${diff.toFixed(1)}`;
-      } else {
-        statusEl.textContent = `You lose. Black ${blackScore} vs White ${whiteScore.toFixed(1)}`;
-        pvEl.textContent = `AI wins by ${(-diff).toFixed(1)}`;
-      }
-    } else {
-      if (diff < 0) {
-        statusEl.textContent = `You win! Black ${blackScore} vs White ${whiteScore.toFixed(1)}`;
-        pvEl.textContent = `🏆 White wins by ${(-diff).toFixed(1)}`;
-      } else {
-        statusEl.textContent = `You lose. Black ${blackScore} vs White ${whiteScore.toFixed(1)}`;
-        pvEl.textContent = `AI wins by ${diff.toFixed(1)}`;
+        if (borders.size === 1) {
+          if (borders.has(BLACK)) blackTerritory += region.length;
+          else whiteTerritory += region.length;
+        }
       }
     }
-  }
 
-  function resignGame() {
-    gameOver = true;
-    gamePhase = "ended";
-    boardButton.disabled = true;
-    candidateGroup.innerHTML = "";
-    candidateList.innerHTML = "";
-    statusEl.textContent = playerColor === BLACK ? "You resigned" : "AI resigned";
-    pvEl.textContent = playerColor === BLACK ? "AI wins" : "🏆 You win!";
+    const blackScore = blackStones + blackTerritory;
+    const whiteScore = whiteStones + whiteTerritory + KOMI;
+
+    let winner: Stone | 'tie';
+    if (blackScore > whiteScore) winner = BLACK;
+    else if (whiteScore > blackScore) winner = WHITE;
+    else winner = 'tie';
+
+    return { blackScore, whiteScore, winner };
   }
 
   // ============ Rendering ============
-  function renderStones() {
+  function renderStones(): void {
     stonesGroup.innerHTML = "";
-    for (let i = 0; i < BOARD_SIZE * BOARD_SIZE; i++) {
-      if (boardState[i] === EMPTY) continue;
-      const { x, y } = xyFromIndex(i);
-      const isLast = moveHistory.length > 0 && moveHistory[moveHistory.length - 1].i === i;
-      stonesGroup.innerHTML += `
-        <circle cx="${pixelFor(x)}" cy="${pixelFor(y)}" r="16"
-          fill="${boardState[i] === BLACK ? "url(#reviewBlackStone)" : "url(#reviewWhiteStone)"}
-          filter="url(#reviewStoneShadow)"></circle>
-        ${isLast ? `<circle cx="${pixelFor(x)}" cy="${pixelFor(y)}" r="5"
-          fill="none" stroke="${boardState[i] === BLACK ? "white" : "#2f766e"}" stroke-width="2"></circle>` : ""}
-      `;
+
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        const stone = state.board[r][c];
+        if (!stone) continue;
+
+        const isLast = state.lastMove?.row === r && state.lastMove?.col === c;
+        stonesGroup.innerHTML += `
+          <circle cx="${pixelFor(c)}" cy="${pixelFor(r)}" r="16"
+            fill="${stone === BLACK ? "url(#reviewBlackStone)" : "url(#reviewWhiteStone)"}"
+            filter="url(#reviewStoneShadow)"></circle>
+          ${isLast ? `<circle cx="${pixelFor(c)}" cy="${pixelFor(r)}" r="5"
+            fill="none" stroke="${stone === BLACK ? "white" : "#2f766e"}" stroke-width="2"></circle>` : ''}
+        `;
+      }
     }
   }
 
-  function renderChart() {
-    const points = winrateHistory.map((v, i) => {
-      const x = winrateHistory.length === 1 ? 0 : (i / (winrateHistory.length - 1)) * 200;
-      const y = 68 - ((v - 30) / 40) * 62;
-      return [x, Math.max(6, Math.min(68, y))];
-    });
-    const line = points.map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
-    chartLine.setAttribute("d", line);
-    chartFill.setAttribute("d", `${line} L200 72 L0 72Z`);
+  function renderChart(): void {
+    // Placeholder - winrate is shown in the sidebar
   }
 
-  function renderCandidates(candidates) {
+  function renderCandidates(candidates: { pos: Position; winrate: number }[]): void {
     candidateGroup.innerHTML = "";
     candidateList.innerHTML = "";
+
     if (!candidates || candidates.length === 0) return;
 
     candidates.slice(0, 4).forEach((c, i) => {
-      const { x, y } = xyFromIndex(c.index);
+      const { row, col } = c.pos;
       candidateGroup.innerHTML += `
-        <circle cx="${pixelFor(x)}" cy="${pixelFor(y)}" r="${18 - i * 2}"
+        <circle cx="${pixelFor(col)}" cy="${pixelFor(row)}" r="${18 - i * 2}"
           fill="rgba(34,197,94,0.14)" stroke="#22c55e" stroke-width="2"></circle>
-        <text x="${pixelFor(x)}" y="${pixelFor(y) + 4}" text-anchor="middle"
-          fill="#dcfce7" font-size="11" font-weight="700">${c.percent}%</text>
+        <text x="${pixelFor(col)}" y="${pixelFor(row) + 4}" text-anchor="middle"
+          fill="#dcfce7" font-size="11" font-weight="700">${Math.round(c.winrate)}%</text>
       `;
       candidateList.innerHTML += `
         <div class="flex items-center justify-between rounded-lg bg-bg-dark/60 border border-border px-3 py-2">
-          <span class="text-sm font-medium">${i + 1}. ${c.point}</span>
-          <span class="text-sm text-teal-light">${c.percent}%</span>
+          <span class="text-sm font-medium">${i + 1}. ${formatPoint(c.pos)}</span>
+          <span class="text-sm text-teal-light">${Math.round(c.winrate)}%</span>
         </div>
       `;
     });
   }
 
-  // ============ AI Analysis ============
-  async function updateAnalysis(color) {
-    const legalMoves = getLegalMoves(boardState, color);
-    const scores = await aiRuntime.analyze({
-      board: boardState,
-      color,
-      legalIndices: legalMoves,
-      moveCount: moveHistory.length,
-      moveHistory,
-    });
+  function updateUI(): void {
+    moveEl.textContent = String(state.moveNumber);
 
-    // Convert scores to candidates
-    const candidates = [];
-    let total = 0;
-    for (let i = 0; i < 81; i++) {
-      if (scores[i] > 0) {
-        candidates.push({ index: i, score: scores[i] });
-        total += scores[i];
-      }
-    }
-    candidates.sort((a, b) => b.score - a.score);
-
-    const result = candidates.slice(0, 4).map(c => ({
-      ...c,
-      point: formatPoint(c.index),
-      percent: Math.round((c.score / total) * 100) || 0
-    }));
-
-    // Calculate winrate (simple heuristic)
-    const blackStones = boardState.filter(v => v === BLACK).length;
-    const whiteStones = boardState.filter(v => v === WHITE).length;
-    const stoneDiff = blackStones - whiteStones;
-    const best = candidates[0]?.score || 0;
-    const winrate = 50 + stoneDiff * 1.2 + best * 2;
-
-    winrateEl.textContent = `${Math.max(30, Math.min(70, winrate)).toFixed(1)}%`;
-    winrateHistory.push(Math.max(30, Math.min(70, winrate)));
-    renderCandidates(result);
-    renderChart();
-
-    return { candidates: result, winrate, legalMoves };
-  }
-
-  // ============ Game Flow ============
-  async function playAiMove() {
-    if (gameOver || gamePhase !== "playing") return;
-    aiThinking = true;
-    boardButton.disabled = true;
-    statusEl.textContent = "KataGo thinking...";
-
-    const result = await updateAnalysis(aiColor);
-    const legalMoves = result.legalMoves;
-
-    // Find best valid move
-    const move = result.candidates.find(c => legalMoves.includes(c.index));
-    if (move) {
-      applyMove(move.index, aiColor);
-      renderStones();
-      moveEl.textContent = String(moveHistory.length);
-      pvEl.textContent = `${aiColor === BLACK ? "Black" : "White"}: ${move.point}`;
-      statusEl.textContent = `AI: ${move.point}`;
-      passCount = 0;
-
-      if (checkGameEnd()) {
-        endGame();
+    if (state.gameOver) {
+      const score = calculateScore();
+      if (state.playerColor === BLACK) {
+        if (score.winner === BLACK) {
+          statusEl.textContent = `You win! ${score.blackScore} vs ${score.whiteScore.toFixed(1)}`;
+          pvEl.textContent = "🏆 You win!";
+        } else if (score.winner === WHITE) {
+          statusEl.textContent = `You lose. ${score.blackScore} vs ${score.whiteScore.toFixed(1)}`;
+          pvEl.textContent = "AI wins";
+        } else {
+          statusEl.textContent = "Draw";
+          pvEl.textContent = "Draw";
+        }
       } else {
-        await updateAnalysis(playerColor);
+        if (score.winner === WHITE) {
+          statusEl.textContent = `You win! ${score.blackScore} vs ${score.whiteScore.toFixed(1)}`;
+          pvEl.textContent = "🏆 You win!";
+        } else if (score.winner === BLACK) {
+          statusEl.textContent = `You lose. ${score.blackScore} vs ${score.whiteScore.toFixed(1)}`;
+          pvEl.textContent = "AI wins";
+        } else {
+          statusEl.textContent = "Draw";
+          pvEl.textContent = "Draw";
+        }
       }
+    } else if (state.currentPlayer === state.playerColor) {
+      statusEl.textContent = "Your turn";
+      pvEl.textContent = "Your turn";
     } else {
-      // No legal moves - check if should resign
-      if (result.winrate < 10) {
-        resignGame();
-        return;
-      }
-      // Pass
-      passCount++;
-      applyMove(-1, aiColor);
-      moveEl.textContent = String(moveHistory.length);
-      pvEl.textContent = `${aiColor === BLACK ? "Black" : "White"} passed`;
-      statusEl.textContent = `AI passed (${passCount}/2)`;
-
-      if (checkGameEnd()) {
-        endGame();
-      } else {
-        await updateAnalysis(playerColor);
-      }
+      statusEl.textContent = "AI thinking...";
     }
 
-    aiThinking = false;
-    boardButton.disabled = false;
+    renderStones();
   }
 
-  async function handleKomiSwap(x, y) {
-    const i = indexOf(x, y);
-    if (boardState[i] !== EMPTY) {
-      statusEl.textContent = "Position occupied";
+  // ============ AI Logic ============
+  async function aiMove(): Promise<void> {
+    if (state.gameOver || state.currentPlayer !== state.aiColor) return;
+
+    const legalMoves = getLegalMoves();
+    if (legalMoves.length === 0) {
+      // No legal moves - check if should resign
+      passMove();
+      updateUI();
       return;
     }
 
-    boardState[i] = BLACK;
-    komiSwapStones.push(i);
-    moveHistory.push({ i, color: BLACK });
-    moveEl.textContent = String(moveHistory.length);
-    renderStones();
-
-    if (komiSwapStones.length === 1) {
-      statusEl.textContent = "Place second stone";
-    } else {
-      // Clear stones and determine colors
-      boardState[komiSwapStones[0]] = EMPTY;
-      boardState[komiSwapStones[1]] = EMPTY;
-      komiSwapStones = [];
-      moveHistory = [];
-      moveEl.textContent = "0";
-
-      const playerIsWhite = Math.random() < 0.5;
-      if (playerIsWhite) {
-        playerColor = WHITE;
-        aiColor = BLACK;
-        statusEl.textContent = "You play white — AI plays first";
-        pvEl.textContent = "AI (black) to play";
-      } else {
-        playerColor = BLACK;
-        aiColor = WHITE;
-        statusEl.textContent = "You play black — place your first move";
-        pvEl.textContent = "Your turn";
-      }
-
-      gamePhase = "playing";
-      renderStones();
-      await updateAnalysis(aiColor);
-
-      if (aiColor === BLACK) {
-        await playAiMove();
+    // Analyze with KataGo
+    const boardFlat = new Int8Array(BOARD_SIZE * BOARD_SIZE);
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        const idx = r * BOARD_SIZE + c;
+        boardFlat[idx] = state.board[r][c] === BLACK ? 1 : state.board[r][c] === WHITE ? 2 : 0;
       }
     }
+
+    const moveIndices = legalMoves.map(p => p.row * BOARD_SIZE + p.col);
+    const scores = await aiRuntime.analyze({
+      board: boardFlat,
+      color: state.aiColor === BLACK ? 1 : 2,
+      legalIndices: moveIndices,
+      moveCount: state.moveNumber,
+      moveHistory: [],
+    });
+
+    // Find best move
+    let bestIdx = -1;
+    let bestScore = -Infinity;
+    for (let i = 0; i < moveIndices.length; i++) {
+      if (scores[moveIndices[i]] > bestScore) {
+        bestScore = scores[moveIndices[i]];
+        bestIdx = i;
+      }
+    }
+
+    if (bestIdx >= 0 && bestScore > 0) {
+      const bestPos = legalMoves[bestIdx];
+      placeStone(bestPos);
+      statusEl.textContent = `AI: ${formatPoint(bestPos)}`;
+      pvEl.textContent = `AI: ${formatPoint(bestPos)}`;
+    } else {
+      // Fallback: random move
+      const randomPos = legalMoves[Math.floor(Math.random() * legalMoves.length)];
+      placeStone(randomPos);
+      statusEl.textContent = `AI: ${formatPoint(randomPos)}`;
+      pvEl.textContent = `AI: ${formatPoint(randomPos)}`;
+    }
+
+    moveEl.textContent = String(state.moveNumber);
+    renderStones();
   }
 
-  async function handleBoardClick(event) {
-    if (aiThinking || gameOver) return;
+  // ============ Event Handlers ============
+  async function handleBoardClick(event: MouseEvent): Promise<void> {
+    if (state.gameOver) return;
 
     const rect = boardButton.getBoundingClientRect();
     const boardX = ((event.clientX - rect.left) / rect.width) * 400;
     const boardY = ((event.clientY - rect.top) / rect.height) * 400;
-    const x = Math.round((boardX - BOARD_ORIGIN) / GRID_STEP);
-    const y = Math.round((boardY - BOARD_ORIGIN) / GRID_STEP);
+    const col = Math.round((boardX - BOARD_ORIGIN) / GRID_STEP);
+    const row = Math.round((boardY - BOARD_ORIGIN) / GRID_STEP);
 
-    if (x < 0 || x >= BOARD_SIZE || y < 0 || y >= BOARD_SIZE) return;
-    const i = indexOf(x, y);
+    if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) return;
 
-    // Komi swap phase
-    if (gamePhase === "komi-swap") {
-      await handleKomiSwap(x, y);
-      return;
-    }
+    if (state.currentPlayer !== state.playerColor) return;
 
-    // Playing phase
-    if (!isValidMove(boardState, i, playerColor)) {
+    const pos = { row, col };
+    if (!isValidMove(pos)) {
       statusEl.textContent = "Illegal move";
       return;
     }
 
-    applyMove(i, playerColor);
-    renderStones();
-    moveEl.textContent = String(moveHistory.length);
-    pvEl.textContent = `${playerColor === BLACK ? "Black" : "White"}: ${formatPoint(i)}`;
-    statusEl.textContent = `You: ${formatPoint(i)}`;
-    passCount = 0;
+    placeStone(pos);
+    pvEl.textContent = `You: ${formatPoint(pos)}`;
+    updateUI();
 
-    if (checkGameEnd()) {
-      endGame();
-    } else {
-      await playAiMove();
+    if (!state.gameOver) {
+      await aiMove();
+      updateUI();
     }
   }
 
-  async function handlePass() {
-    if (aiThinking || gameOver || gamePhase !== "playing") return;
+  async function handlePass(): Promise<void> {
+    if (state.gameOver) return;
+    if (state.currentPlayer !== state.playerColor) return;
 
-    passCount++;
-    applyMove(-1, playerColor);
-    moveEl.textContent = String(moveHistory.length);
-    pvEl.textContent = `${playerColor === BLACK ? "Black" : "White"} passed`;
-    statusEl.textContent = `You passed (${passCount}/2)`;
-    renderStones();
+    passMove();
+    pvEl.textContent = "You passed";
+    updateUI();
 
-    if (checkGameEnd()) {
-      endGame();
-    } else {
-      await playAiMove();
+    if (!state.gameOver) {
+      await aiMove();
+      updateUI();
     }
   }
 
-  function handlePointerMove(event) {
-    if (aiThinking || gameOver) return;
+  function handleResign(): void {
+    state.gameOver = true;
+    boardButton.disabled = true;
+    statusEl.textContent = "You resigned";
+    pvEl.textContent = "AI wins";
+  }
+
+  function handlePointerMove(event: MouseEvent): void {
     const rect = boardButton.getBoundingClientRect();
     const boardX = ((event.clientX - rect.left) / rect.width) * 400;
     const boardY = ((event.clientY - rect.top) / rect.height) * 400;
-    const x = Math.round((boardX - BOARD_ORIGIN) / GRID_STEP);
-    const y = Math.round((boardY - BOARD_ORIGIN) / GRID_STEP);
-    const i = indexOf(x, y);
+    const col = Math.round((boardX - BOARD_ORIGIN) / GRID_STEP);
+    const row = Math.round((boardY - BOARD_ORIGIN) / GRID_STEP);
 
-    if (x < 0 || x >= BOARD_SIZE || y < 0 || y >= BOARD_SIZE || boardState[i] !== EMPTY) {
+    if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE ||
+        state.board[row][col] !== EMPTY) {
       hoverStone.setAttribute("cx", "-20");
       hoverStone.setAttribute("cy", "-20");
     } else {
-      hoverStone.setAttribute("cx", String(pixelFor(x)));
-      hoverStone.setAttribute("cy", String(pixelFor(y)));
+      hoverStone.setAttribute("cx", String(pixelFor(col)));
+      hoverStone.setAttribute("cy", String(pixelFor(row)));
     }
   }
 
-  function resetGame() {
-    boardState = new Int8Array(BOARD_SIZE * BOARD_SIZE);
-    moveHistory = [];
-    winrateHistory = [50];
-    koPoint = -1;
-    passCount = 0;
-    playerColor = BLACK;
-    aiColor = WHITE;
-    gameOver = false;
-    aiThinking = false;
-    gamePhase = "komi-swap";
-    komiSwapStones = [];
-
+  function resetGame(): void {
+    state = createEmptyState();
     boardButton.disabled = false;
-    moveEl.textContent = "0";
-    winrateEl.textContent = "50.0%";
-    pvEl.textContent = "Komi swap: place 2 stones";
-    statusEl.textContent = "Place komi stones";
     candidateGroup.innerHTML = "";
     candidateList.innerHTML = "";
-
-    renderStones();
-    renderChart();
+    winrateEl.textContent = "50.0%";
+    chartLine.setAttribute("d", "");
+    chartFill.setAttribute("d", "");
+    updateUI();
   }
 
   // ============ Event Listeners ============
@@ -742,20 +712,21 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
   });
   newGameButton?.addEventListener("click", resetGame);
   passButton?.addEventListener("click", handlePass);
-  resignButton?.addEventListener("click", resignGame);
+  resignButton?.addEventListener("click", handleResign);
 
   // ============ Boot ============
-  async function bootRuntime() {
-    statusEl.textContent = "Starting TF.js engine...";
+  async function boot(): Promise<void> {
+    statusEl.textContent = "Starting engine...";
     await aiRuntime.init();
-    statusEl.textContent = "Loading KataGo neural network...";
+    statusEl.textContent = "Loading model...";
     const model = katagoModelUrl ? await aiRuntime.loadModel(katagoModelUrl) : null;
     if (model) {
       statusEl.textContent = `${aiRuntime.engineLabel()} loaded`;
     } else {
       statusEl.textContent = aiRuntime.engineLabel();
     }
+    resetGame();
   }
 
-  bootRuntime().finally(resetGame);
+  boot();
 </script>
