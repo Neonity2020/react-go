@@ -182,6 +182,7 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
   let moveHistory = [];
   let winrateHistory = [50];
   let aiThinking = false;
+  let gameOver = false;
 
   const boardButton = document.getElementById("review-board");
   const reviewSection = document.getElementById("review");
@@ -290,6 +291,88 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     }, 0);
     const liberties = groupAndLiberties(played, index).liberties.size * 0.08;
     return center * 0.65 + star + edgePenalty + contact + liberties;
+  }
+
+  function getLegalMoves(board, color) {
+    return Array.from({ length: boardSize * boardSize }, (_, i) => i)
+      .filter((i) => placeStone(board, i) !== null);
+  }
+
+  /** Simple territory scoring: stones + surrounded empty points */
+  function calculateScore() {
+    const visited = new Set();
+    let blackTerritory = 0;
+    let whiteTerritory = 0;
+
+    // Count stones
+    for (let i = 0; i < boardSize * boardSize; i++) {
+      if (boardState[i] === black) blackTerritory++;
+      else if (boardState[i] === white) whiteTerritory++;
+    }
+
+    // Count territory (empty regions owned by one color)
+    for (let i = 0; i < boardSize * boardSize; i++) {
+      if (boardState[i] !== empty || visited.has(i)) continue;
+      const region = [];
+      const borderColors = new Set();
+      const queue = [i];
+      visited.add(i);
+      while (queue.length > 0) {
+        const pos = queue.pop();
+        region.push(pos);
+        for (const next of neighbors(pos)) {
+          if (boardState[next] === empty && !visited.has(next)) {
+            visited.add(next);
+            queue.push(next);
+          } else if (boardState[next] !== empty) {
+            borderColors.add(boardState[next]);
+          }
+        }
+      }
+      // If bordered by only one color, it's that color's territory
+      if (borderColors.size === 1) {
+        const owner = borderColors.values().next().value;
+        if (owner === black) blackTerritory += region.length;
+        else if (owner === white) whiteTerritory += region.length;
+      }
+    }
+
+    const komi = 5.5;
+    const blackScore = blackTerritory;
+    const whiteScore = whiteTerritory + komi;
+    return { blackScore, whiteScore, komi };
+  }
+
+  function checkGameEnd() {
+    const blackLegal = getLegalMoves(boardState, black);
+    const whiteLegal = getLegalMoves(boardState, white);
+    // Game ends when board is full or both sides have no legal moves
+    if (blackLegal.length === 0 && whiteLegal.length === 0) {
+      return true;
+    }
+    // Also end if board is nearly full (> 70 of 81 filled)
+    const filled = Array.from(boardState).filter((v) => v !== empty).length;
+    if (filled >= 70) return true;
+    return false;
+  }
+
+  function endGame() {
+    gameOver = true;
+    boardButton.disabled = true;
+    candidateGroup.innerHTML = "";
+    candidateList.innerHTML = "";
+    const { blackScore, whiteScore, komi } = calculateScore();
+    const diff = blackScore - whiteScore;
+    if (diff > 0) {
+      statusEl.textContent = `Game over — You win! Black ${blackScore} vs White ${whiteScore} (komi ${komi})`;
+      pvEl.textContent = `🏆 Black wins by ${diff.toFixed(1)} points`;
+    } else if (diff < 0) {
+      statusEl.textContent = `Game over — You lose. Black ${blackScore} vs White ${whiteScore} (komi ${komi})`;
+      pvEl.textContent = `White wins by ${(-diff).toFixed(1)} points`;
+    } else {
+      statusEl.textContent = `Game over — Draw! Black ${blackScore} vs White ${whiteScore}`;
+      pvEl.textContent = "Draw";
+    }
   }
 
   function summarize(scores, color) {
@@ -402,17 +485,28 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
       applyMove(response.index, white);
       pvEl.textContent = `White answered at ${response.point}`;
       statusEl.textContent = `${aiRuntime.engineLabel()} played white at ${response.point}`;
-      await updateAnalysis(black);
+      if (checkGameEnd()) {
+        endGame();
+      } else {
+        await updateAnalysis(black);
+      }
     } else {
-      statusEl.textContent = "No legal AI move found";
+      // AI has no legal move — pass
+      if (checkGameEnd()) {
+        endGame();
+      } else {
+        statusEl.textContent = "White passed — your turn";
+        pvEl.textContent = "White passed";
+        await updateAnalysis(black);
+      }
     }
 
-    boardButton.disabled = false;
+    if (!gameOver) boardButton.disabled = false;
     aiThinking = false;
   }
 
   async function handleBoardClick(event) {
-    if (aiThinking) return;
+    if (aiThinking || gameOver) return;
     const rect = boardButton.getBoundingClientRect();
     const boardX = ((event.clientX - rect.left) / rect.width) * 400;
     const boardY = ((event.clientY - rect.top) / rect.height) * 400;
@@ -428,6 +522,10 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
 
     pvEl.textContent = `Black played ${formatPoint(index)}`;
     statusEl.textContent = `You played ${formatPoint(index)}`;
+    if (checkGameEnd()) {
+      endGame();
+      return;
+    }
     await playAiMove();
   }
 
