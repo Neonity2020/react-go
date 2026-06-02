@@ -411,15 +411,18 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     return { blackLegal, whiteLegal };
   }
 
-  function resignGame(winner = white) {
+  function resignGame(loserColor = white) {
     gameOver = true;
     boardButton.disabled = true;
     candidateGroup.innerHTML = "";
     candidateList.innerHTML = "";
-    if (winner === black) {
+    // loserColor is the color that resigned
+    if (loserColor === aiColor) {
+      // AI resigned, player wins
       statusEl.textContent = "AI resigned — You win!";
       pvEl.textContent = "🏆 You win!";
     } else {
+      // Player resigned, AI wins
       statusEl.textContent = "You resigned — AI wins";
       pvEl.textContent = "AI wins";
     }
@@ -436,9 +439,21 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     candidateList.innerHTML = "";
     const { blackScore, whiteScore, komi } = calculateScore();
     const diff = blackScore - whiteScore;
+    // Debug logging
+    console.log(`endGame: playerColor=${playerColor}, diff=${diff}, blackScore=${blackScore}, whiteScore=${whiteScore}`);
     // Determine winner based on player color
-    const playerWins = playerColor === black ? diff > 0 : diff < 0;
-    const aiWins = playerColor === black ? diff < 0 : diff > 0;
+    // Black wins: blackScore > whiteScore (diff > 0)
+    // White wins: whiteScore > blackScore (diff < 0)
+    let playerWins = false;
+    let aiWins = false;
+    if (playerColor === black) {
+      playerWins = diff > 0;
+      aiWins = diff < 0;
+    } else {
+      playerWins = diff < 0;
+      aiWins = diff > 0;
+    }
+    console.log(`endGame: playerWins=${playerWins}, aiWins=${aiWins}`);
     if (playerWins) {
       statusEl.textContent = `Game over — You win! Black ${blackScore} vs White ${whiteScore} (komi ${komi})`;
       pvEl.textContent = `🏆 You win by ${Math.abs(diff).toFixed(1)} points`;
