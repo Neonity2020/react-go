@@ -1,5 +1,5 @@
 .local/
 public/katago/*.gz
 public/katago/*.txt
-public/katago/*.bin.gz
+!public/katago/katago-small.bin.gz
 public/tfjs/
