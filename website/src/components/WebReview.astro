@@ -53,14 +53,6 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
             <span data-lang="en">New web game</span>
             <span data-lang="zh">重新开始网页对局</span>
           </button>
-          <button
-            type="button"
-            id="review-pass"
-            class="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl border border-border text-text-secondary hover:text-text-primary hover:border-text-muted font-medium transition-all cursor-pointer"
-          >
-            <span data-lang="en">Pass</span>
-            <span data-lang="zh">虚手</span>
-          </button>
           <a
             href="https://github.com/Neonity2020/react-go/releases/latest"
             target="_blank"
@@ -137,6 +129,14 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
               <span data-lang="en">You play black. Click an empty intersection; white responds automatically.</span>
               <span data-lang="zh">你执黑。点击空交叉点落子，白棋会自动回应。</span>
             </div>
+            <button
+              type="button"
+              id="review-pass"
+              class="mt-3 inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-border text-text-secondary hover:text-text-primary hover:border-text-muted font-medium transition-all cursor-pointer w-full sm:w-auto"
+            >
+              <span data-lang="en">Pass</span>
+              <span data-lang="zh">虚手</span>
+            </button>
           </div>
 
           <aside class="border-t md:border-t-0 md:border-l border-border p-5">
@@ -242,6 +242,7 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
 
   function groupAndLiberties(board, start) {
     const color = board[start];
+    if (color === empty) return { group: [start], liberties: new Set([start]) };
     const group = [];
     const liberties = new Set();
     const seen = new Set([start]);
@@ -277,42 +278,31 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     const nextBoard = cloneBoard(board);
     const opponent = color === black ? white : black;
     nextBoard[index] = color;
-    let capturedAny = false;
-    let newKoPoint = -1;
 
+    let capturedPos = -1;
+
+    // Capture opponent groups with 0 liberties
     neighbors(index).forEach((next) => {
       if (nextBoard[next] !== opponent) return;
       const target = groupAndLiberties(nextBoard, next);
       if (target.liberties.size === 0) {
+        if (target.group.length === 1) capturedPos = target.group[0];
         target.group.forEach((stone) => {
           nextBoard[stone] = empty;
         });
-        capturedAny = true;
       }
     });
 
+    // Check for suicide
     const own = groupAndLiberties(nextBoard, index);
     if (own.liberties.size === 0) return null;
 
-    // Set ko point: single stone capture that creates ko
-    if (capturedAny) {
-      const opponent = color === black ? white : black;
-      let koCandidate = -1;
-      neighbors(index).forEach((next) => {
-        if (board[next] === opponent) {
-          const target = groupAndLiberties(nextBoard, next);
-          // Ko: exactly one liberty (the former stone position) and one stone
-          if (target.liberties.size === 1 && target.group.length === 1) {
-            const lib = [...target.liberties][0];
-            // The liberty should be the position we just played
-            if (lib === index) {
-              koCandidate = next;
-            }
-          }
-        }
-      });
-      if (koCandidate !== -1) {
-        newKoPoint = koCandidate;
+    // Ko detection: capture exactly ONE stone that had only our placement as its liberty
+    let newKoPoint = -1;
+    if (capturedPos !== -1) {
+      const orig = groupAndLiberties(board, capturedPos);
+      if (orig.liberties.size === 1 && [...orig.liberties][0] === index) {
+        newKoPoint = capturedPos;
       }
     }
 
