@@ -617,12 +617,16 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     } else if (komiSwapPositions.length === 2) {
       gamePhase = "playing";
       komiSwapHint.style.display = "none";
+      // Clear komi swap stones
+      boardState[komiSwapPositions[0]] = empty;
+      boardState[komiSwapPositions[1]] = empty;
+      komiSwapPositions = [];
+      moveHistory = [];
+      moveEl.textContent = "0";
       const playerIsWhite = Math.random() < 0.5;
       if (playerIsWhite) {
         playerColor = white;
         aiColor = black;
-        boardState[komiSwapPositions[0]] = white;
-        boardState[komiSwapPositions[1]] = black;
         statusEl.textContent = "You play white — AI plays first";
         pvEl.textContent = "AI plays first";
         renderStones();
@@ -632,6 +636,7 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
         aiColor = white;
         statusEl.textContent = "You play black — place your first move";
         pvEl.textContent = "Place your first move";
+        renderStones();
         await updateAnalysis(playerColor);
       }
     }
