@@ -428,10 +428,6 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     }
   }
 
-  function aiResign() {
-    resignGame(black);
-  }
-
   function endGame() {
     gameOver = true;
     boardButton.disabled = true;
@@ -439,8 +435,6 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     candidateList.innerHTML = "";
     const { blackScore, whiteScore, komi } = calculateScore();
     const diff = blackScore - whiteScore;
-    // Debug logging
-    console.log(`endGame: playerColor=${playerColor}, diff=${diff}, blackScore=${blackScore}, whiteScore=${whiteScore}`);
     // Determine winner based on player color
     // Black wins: blackScore > whiteScore (diff > 0)
     // White wins: whiteScore > blackScore (diff < 0)
@@ -453,7 +447,6 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
       playerWins = diff < 0;
       aiWins = diff > 0;
     }
-    console.log(`endGame: playerWins=${playerWins}, aiWins=${aiWins}`);
     if (playerWins) {
       statusEl.textContent = `Game over — You win! Black ${blackScore} vs White ${whiteScore} (komi ${komi})`;
       pvEl.textContent = `🏆 You win by ${Math.abs(diff).toFixed(1)} points`;
@@ -596,12 +589,7 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
         await updateAnalysis(playerColor);
       }
     } else {
-      const bestCandidate = result.candidates[0];
-      if (!bestCandidate || bestCandidate.percent < 5) {
-        aiThinking = false;
-        aiResign();
-        return;
-      }
+      // No legal moves available - pass
       passCount++;
       if (checkGameEnd()) {
         endGame();
