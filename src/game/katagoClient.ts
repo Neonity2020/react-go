@@ -1,4 +1,5 @@
 import type { GameState, Position, AnalysisResult, AIDifficulty } from './types';
+import { isValidMove } from './engine';
 
 export type KataGoMoveResult = Position | 'resign' | null;
 export type KataGoSetupStatus = {
@@ -79,7 +80,12 @@ export async function getKataGoMove(state: GameState, komi: number, difficulty: 
     const data = await response.json() as { result?: unknown };
     if (data.result === 'resign') return 'resign';
     if (data.result === null || typeof data.result === 'undefined') return null;
-    if (isPosition(data.result)) return data.result;
+    if (isPosition(data.result)) {
+      if (!isValidMove(state, data.result)) {
+        throw new Error('KataGo bridge returned an illegal move');
+      }
+      return data.result;
+    }
     throw new Error('KataGo bridge returned an invalid move');
   } finally {
     window.clearTimeout(timeout);
@@ -107,7 +113,10 @@ export async function getKataGoAnalysis(state: GameState, komi: number, duration
       throw new Error(data.error);
     }
     if (data.ok && data.analysis) {
-      return data.analysis;
+      return {
+        ...data.analysis,
+        moves: data.analysis.moves.filter(move => !move.position || isValidMove(state, move.position)),
+      };
     }
     throw new Error('KataGo bridge returned invalid analysis data');
   } finally {

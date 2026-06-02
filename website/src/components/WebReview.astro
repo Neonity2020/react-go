@@ -230,6 +230,10 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
   let moveHistory: Array<{ index: number; color: number }> = [];
   let winrateHistory: number[] = [50];
 
+  const AI_RESIGN_MIN_MOVE = 18;
+  const AI_RESIGN_WINRATE = 2.5;
+  const AI_RESIGN_SCORE_DEFICIT = 18;
+
   function createEmptyBoard(): Board {
     return Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(EMPTY));
   }
@@ -413,6 +417,27 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     statusEl.textContent = "AI passed";
     pvEl.textContent = "AI passed";
     return true;
+  }
+
+  function aiScoreLead(): number {
+    const score = calculateScore();
+    const blackLead = score.blackScore - score.whiteScore;
+    return aiColor === BLACK ? blackLead : -blackLead;
+  }
+
+  function shouldAiResign(aiWinrate: number): boolean {
+    return (
+      moveNumber >= AI_RESIGN_MIN_MOVE &&
+      aiWinrate <= AI_RESIGN_WINRATE &&
+      aiScoreLead() <= -AI_RESIGN_SCORE_DEFICIT
+    );
+  }
+
+  function aiResign(): void {
+    gameOver = true;
+    boardButton.disabled = true;
+    statusEl.textContent = "AI resigned";
+    pvEl.textContent = "AI resigned";
   }
 
   function placeStone(pos: Position): boolean {
@@ -646,12 +671,18 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
       }
       const { scores } = analysis;
 
+      if (shouldAiResign(analysis.winrate)) {
+        aiResign();
+        return;
+      }
+
       const blackWinrate = aiColor === BLACK ? analysis.winrate : 100 - analysis.winrate;
       winrateHistory.push(blackWinrate);
       winrateEl.textContent = `${blackWinrate.toFixed(1)}%`;
 
       const rankedMoves = legalMoves
         .map((pos) => ({ pos, score: scores[pos.row * BOARD_SIZE + pos.col] }))
+        .filter((move) => Number.isFinite(move.score) && isValidMove(move.pos, aiColor))
         .sort((a, b) => b.score - a.score);
 
       const topScore = rankedMoves[0]?.score ?? 0;
@@ -664,9 +695,12 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
 
       const bestPos = rankedMoves[0]?.pos ?? chooseFallbackMove(legalMoves, aiColor);
       if (bestPos) {
-        placeStone(bestPos);
-        statusEl.textContent = `AI: ${formatPoint(bestPos)}`;
-        pvEl.textContent = `AI: ${formatPoint(bestPos)}`;
+        if (isValidMove(bestPos, aiColor) && placeStone(bestPos)) {
+          statusEl.textContent = `AI: ${formatPoint(bestPos)}`;
+          pvEl.textContent = `AI: ${formatPoint(bestPos)}`;
+        } else {
+          playAiFallbackMove("illegal filtered");
+        }
       } else {
         passMove();
         statusEl.textContent = "AI passed";

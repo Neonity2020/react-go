@@ -16,7 +16,6 @@ import type { WorkerRequest, WorkerResponse } from "./types";
 
 let model: KataGoModelV8Tf | null = null;
 let activeBackend = "none";
-let activeModelName = "";
 
 async function initBackend(): Promise<string> {
   // Try WebGPU first
@@ -103,8 +102,6 @@ async function handleInit(modelUrl: string): Promise<WorkerResponse> {
     } catch (err) {
       return { type: "init_result", ok: false, backend, modelName: "", blocks: 0, channels: 0, error: errMsg("TF.js model build failed", err) };
     }
-    activeModelName = parsed.modelName;
-
     // Step 5: Warmup forward pass
     try {
       const dummySpatial = tf.zeros([1, BOARD_19, BOARD_19, INPUT_SPATIAL_CHANNELS_V7]);
@@ -161,7 +158,6 @@ async function handleAnalyze(
 
     // Policy output is [1, 19, 19, policyOutChannels] — extract center 9×9
     const policyData = await result.policy.data<Float32Array>();
-    const passData = await result.policyPass.data<Float32Array>();
 
     // Extract 9×9 scores from 19×19 policy (centered at offset 5)
     const scores = extractPolicy9x9(policyData);

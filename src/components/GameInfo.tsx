@@ -65,7 +65,7 @@ function guessLabel(guess: NigiriGuess) {
 }
 
 function formatMove(record: MoveRecord, boardSize: number) {
-  if (!record.position) return '弃权';
+  if (!record.position) return '虚手';
   const col = BOARD_LETTERS[record.position.col] ?? String(record.position.col + 1);
   return `${col}${boardSize - record.position.row}`;
 }
@@ -843,7 +843,7 @@ export default function GameApp() {
                 悔棋
               </button>
               <button type="button" onClick={handlePass} disabled={boardDisabled}>
-                弃权
+                虚手
               </button>
               <button type="button" className="danger-button" onClick={handleResign} disabled={gameOver || nigiriPending}>
                 认输

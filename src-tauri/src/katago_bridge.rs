@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
+    collections::HashSet,
     env, fs,
     io::{BufRead, BufReader, Read, Write},
     net::{TcpListener, TcpStream},
@@ -39,13 +40,15 @@ impl BridgeConfig {
         let installed_model = installed_root.join("models/default.bin.gz");
         let installed_config = installed_root.join("configs/gtp_example.cfg");
 
-        let katago_bin = env::var_os("KATAGO_BIN").map(PathBuf::from).unwrap_or_else(|| {
-            if installed_bin.exists() {
-                installed_bin
-            } else {
-                PathBuf::from("/opt/homebrew/bin/katago")
-            }
-        });
+        let katago_bin = env::var_os("KATAGO_BIN")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                if installed_bin.exists() {
+                    installed_bin
+                } else {
+                    PathBuf::from("/opt/homebrew/bin/katago")
+                }
+            });
         let katago_share = env::var_os("KATAGO_SHARE")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("/opt/homebrew/opt/katago/share/katago"));
@@ -256,7 +259,8 @@ fn install_katago_with_homebrew() -> Result<(), String> {
         );
     }
 
-    run_command("brew", &["list", "katago"]).or_else(|_| run_command("brew", &["install", "katago"]))
+    run_command("brew", &["list", "katago"])
+        .or_else(|_| run_command("brew", &["install", "katago"]))
 }
 
 fn find_katago_release_asset_url(downloads_dir: &Path) -> Result<Option<String>, String> {
@@ -289,8 +293,8 @@ fn find_katago_release_asset_url(downloads_dir: &Path) -> Result<Option<String>,
                 let url = asset.get("browser_download_url")?.as_str()?;
                 let is_macos = name.contains("mac") || name.contains("osx");
                 let is_archive = name.ends_with(".zip");
-                let is_arch = name.contains(wanted_arch)
-                    || (wanted_arch == "x64" && name.contains("x86_64"));
+                let is_arch =
+                    name.contains(wanted_arch) || (wanted_arch == "x64" && name.contains("x86_64"));
                 (is_macos && is_archive && is_arch).then(|| url.to_string())
             })
         });
@@ -689,7 +693,12 @@ impl KataGoBridge {
         let difficulty_config = move_difficulty_config(difficulty);
         if difficulty_config.duration_ms > 0 {
             let analysis = self.get_analysis(state, komi, difficulty_config.duration_ms)?;
-            if let Some(selected_move) = pick_analysis_move(&analysis.moves, difficulty_config) {
+            if should_resign_from_analysis(&analysis, state) {
+                return Ok(json!("resign"));
+            }
+            if let Some(selected_move) =
+                pick_analysis_move(&analysis.moves, difficulty_config, state)
+            {
                 return Ok(parsed_move_to_json(parse_gtp_move(
                     &selected_move.gtp_move,
                     state.board_size,
@@ -697,13 +706,22 @@ impl KataGoBridge {
             }
         }
 
+        if difficulty_config.duration_ms == 0 {
+            let analysis = self.get_analysis(state, komi, 700)?;
+            if should_resign_from_analysis(&analysis, state) {
+                return Ok(json!("resign"));
+            }
+        }
+
         let raw_move =
             self.send_gtp(&format!("genmove {}", to_gtp_color(&state.current_player)?))?;
         let first_token = raw_move.split_whitespace().next().unwrap_or("pass");
-        Ok(parsed_move_to_json(parse_gtp_move(
-            first_token,
-            state.board_size,
-        )?))
+        let parsed = parse_gtp_move(first_token, state.board_size)?;
+        if is_legal_parsed_move(state, &parsed) {
+            Ok(parsed_move_to_json(parsed))
+        } else {
+            Ok(Value::Null)
+        }
     }
 
     fn get_analysis(
@@ -739,9 +757,13 @@ impl KataGoBridge {
             .map_err(|error| format!("Failed to stop KataGo analysis: {error}"))?;
 
         let raw_stdout = read_gtp_response(process)?;
+        let moves = parse_analysis(&raw_stdout, state.board_size)
+            .into_iter()
+            .filter(|item| is_legal_analysis_move(state, item))
+            .collect();
         Ok(AnalysisResult {
             current_player: state.current_player.clone(),
-            moves: parse_analysis(&raw_stdout, state.board_size),
+            moves,
         })
     }
 }
@@ -806,6 +828,9 @@ struct GameStatePayload {
     current_player: String,
     #[serde(rename = "moveRecords")]
     move_records: Vec<MoveRecordPayload>,
+    board: Option<Vec<Vec<Option<String>>>>,
+    #[serde(rename = "koPoint")]
+    ko_point: Option<Position>,
     handicap: Option<i64>,
 }
 
@@ -847,6 +872,26 @@ struct MoveDifficultyConfig {
     temperature: f64,
 }
 
+const RESIGN_MIN_WINRATE: f64 = 2.5;
+
+fn resign_score_deficit(board_size: usize) -> f64 {
+    match board_size {
+        9 => 18.0,
+        13 => 35.0,
+        19 => 65.0,
+        _ => 50.0,
+    }
+}
+
+fn resign_min_move_fraction(board_size: usize) -> f64 {
+    match board_size {
+        9 => 0.22,
+        13 => 0.18,
+        19 => 0.16,
+        _ => 0.18,
+    }
+}
+
 fn move_difficulty_config(difficulty: &str) -> MoveDifficultyConfig {
     match difficulty {
         "beginner" => MoveDifficultyConfig {
@@ -883,10 +928,12 @@ fn random_unit() -> f64 {
 fn pick_analysis_move<'a>(
     moves: &'a [AnalysisMove],
     config: MoveDifficultyConfig,
+    state: &GameStatePayload,
 ) -> Option<&'a AnalysisMove> {
     let candidates: Vec<&AnalysisMove> = moves
         .iter()
         .filter(|item| !item.gtp_move.eq_ignore_ascii_case("resign"))
+        .filter(|item| is_legal_analysis_move(state, item))
         .take(config.top_n)
         .collect();
     if candidates.is_empty() {
@@ -930,6 +977,12 @@ fn validate_state(state: &GameStatePayload) -> Result<(), String> {
         to_gtp_color(&move_record.player)?;
         if let Some(position) = move_record.position {
             validate_position(position, state.board_size)?;
+        }
+    }
+    if let Some(board) = &state.board {
+        if board.len() != state.board_size || board.iter().any(|row| row.len() != state.board_size)
+        {
+            return Err("Board shape does not match board size".to_string());
         }
     }
     Ok(())
@@ -999,6 +1052,149 @@ fn parsed_move_to_json(parsed: ParsedGtpMove) -> Value {
         ParsedGtpMove::Pass => Value::Null,
         ParsedGtpMove::Resign => json!("resign"),
     }
+}
+
+fn is_legal_analysis_move(state: &GameStatePayload, item: &AnalysisMove) -> bool {
+    if item.position.is_none() {
+        return true;
+    }
+    is_legal_position(state, item.position.unwrap())
+}
+
+fn is_legal_parsed_move(state: &GameStatePayload, parsed: &ParsedGtpMove) -> bool {
+    match parsed {
+        ParsedGtpMove::Position(position) => is_legal_position(state, *position),
+        ParsedGtpMove::Pass | ParsedGtpMove::Resign => true,
+    }
+}
+
+fn is_legal_position(state: &GameStatePayload, position: Position) -> bool {
+    let Some(board) = &state.board else {
+        return true;
+    };
+    if position.row >= state.board_size || position.col >= state.board_size {
+        return false;
+    }
+    if board[position.row][position.col].is_some() {
+        return false;
+    }
+    if state
+        .ko_point
+        .is_some_and(|ko| ko.row == position.row && ko.col == position.col)
+    {
+        return false;
+    }
+
+    let mut new_board = board.clone();
+    new_board[position.row][position.col] = Some(state.current_player.clone());
+    let opponent = if state.current_player == "black" {
+        "white"
+    } else {
+        "black"
+    };
+
+    let mut captured = 0usize;
+    for neighbor in neighbors(position, state.board_size) {
+        if new_board[neighbor.row][neighbor.col].as_deref() == Some(opponent) {
+            let group = group_at(&new_board, neighbor, state.board_size);
+            if liberties(&new_board, &group, state.board_size) == 0 {
+                captured += group.len();
+                for stone in group {
+                    new_board[stone.row][stone.col] = None;
+                }
+            }
+        }
+    }
+
+    if captured == 0 {
+        let own_group = group_at(&new_board, position, state.board_size);
+        return liberties(&new_board, &own_group, state.board_size) > 0;
+    }
+    true
+}
+
+fn neighbors(position: Position, board_size: usize) -> Vec<Position> {
+    let mut result = Vec::new();
+    if position.row > 0 {
+        result.push(Position {
+            row: position.row - 1,
+            col: position.col,
+        });
+    }
+    if position.row + 1 < board_size {
+        result.push(Position {
+            row: position.row + 1,
+            col: position.col,
+        });
+    }
+    if position.col > 0 {
+        result.push(Position {
+            row: position.row,
+            col: position.col - 1,
+        });
+    }
+    if position.col + 1 < board_size {
+        result.push(Position {
+            row: position.row,
+            col: position.col + 1,
+        });
+    }
+    result
+}
+
+fn group_at(board: &[Vec<Option<String>>], position: Position, board_size: usize) -> Vec<Position> {
+    let Some(stone) = board[position.row][position.col].as_deref() else {
+        return Vec::new();
+    };
+    let mut visited = HashSet::<(usize, usize)>::new();
+    let mut group = Vec::new();
+    let mut stack = vec![position];
+    while let Some(current) = stack.pop() {
+        if !visited.insert((current.row, current.col)) {
+            continue;
+        }
+        group.push(current);
+        for neighbor in neighbors(current, board_size) {
+            if !visited.contains(&(neighbor.row, neighbor.col))
+                && board[neighbor.row][neighbor.col].as_deref() == Some(stone)
+            {
+                stack.push(neighbor);
+            }
+        }
+    }
+    group
+}
+
+fn liberties(board: &[Vec<Option<String>>], group: &[Position], board_size: usize) -> usize {
+    let mut liberty_set = HashSet::<(usize, usize)>::new();
+    for position in group {
+        for neighbor in neighbors(*position, board_size) {
+            if board[neighbor.row][neighbor.col].is_none() {
+                liberty_set.insert((neighbor.row, neighbor.col));
+            }
+        }
+    }
+    liberty_set.len()
+}
+
+fn should_resign_from_analysis(analysis: &AnalysisResult, state: &GameStatePayload) -> bool {
+    let Some(best_move) = analysis.moves.first() else {
+        return false;
+    };
+    let min_moves =
+        (state.board_size * state.board_size) as f64 * resign_min_move_fraction(state.board_size);
+    if state.move_records.len() < min_moves.ceil() as usize {
+        return false;
+    }
+    if best_move.winrate > RESIGN_MIN_WINRATE {
+        return false;
+    }
+    let current_player_score_lead = if state.current_player == "black" {
+        best_move.score_lead
+    } else {
+        -best_move.score_lead
+    };
+    current_player_score_lead <= -resign_score_deficit(state.board_size)
 }
 
 fn get_max_handicap_stones(board_size: usize) -> i64 {

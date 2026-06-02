@@ -213,13 +213,117 @@ const MOVE_DIFFICULTY_CONFIG = {
   strongest: { durationMs: 0, topN: 1, temperature: 0 },
 };
 
+const RESIGN_CONFIG = {
+  minWinrate: 2.5,
+  minMoveFractions: { 9: 0.22, 13: 0.18, 19: 0.16 },
+  scoreDeficits: { 9: 18, 13: 35, 19: 65 },
+};
+
 function getMoveDifficultyConfig(difficulty) {
   return MOVE_DIFFICULTY_CONFIG[difficulty] ?? MOVE_DIFFICULTY_CONFIG.normal;
 }
 
-function pickAnalysisMove(moves, config) {
+function positionKey(position) {
+  return `${position.row},${position.col}`;
+}
+
+function getNeighbors(pos, size) {
+  const neighbors = [];
+  if (pos.row > 0) neighbors.push({ row: pos.row - 1, col: pos.col });
+  if (pos.row < size - 1) neighbors.push({ row: pos.row + 1, col: pos.col });
+  if (pos.col > 0) neighbors.push({ row: pos.row, col: pos.col - 1 });
+  if (pos.col < size - 1) neighbors.push({ row: pos.row, col: pos.col + 1 });
+  return neighbors;
+}
+
+function getGroup(board, pos, size) {
+  const stone = board[pos.row]?.[pos.col];
+  if (!stone) return [];
+
+  const visited = new Set();
+  const group = [];
+  const queue = [pos];
+  while (queue.length > 0) {
+    const current = queue.pop();
+    const key = positionKey(current);
+    if (visited.has(key)) continue;
+    visited.add(key);
+    group.push(current);
+    for (const neighbor of getNeighbors(current, size)) {
+      if (!visited.has(positionKey(neighbor)) && board[neighbor.row]?.[neighbor.col] === stone) {
+        queue.push(neighbor);
+      }
+    }
+  }
+  return group;
+}
+
+function getLiberties(board, group, size) {
+  const liberties = new Set();
+  for (const pos of group) {
+    for (const neighbor of getNeighbors(pos, size)) {
+      if (board[neighbor.row]?.[neighbor.col] === null) {
+        liberties.add(positionKey(neighbor));
+      }
+    }
+  }
+  return liberties.size;
+}
+
+function isLegalPosition(state, position) {
+  const boardSize = state?.boardSize;
+  const board = state?.board;
+  const currentPlayer = state?.currentPlayer;
+  if (!position) return true;
+  if (!Array.isArray(board) || ![9, 13, 19].includes(boardSize)) return true;
+  if (position.row < 0 || position.row >= boardSize || position.col < 0 || position.col >= boardSize) return false;
+  if (board[position.row]?.[position.col] !== null) return false;
+  if (state?.koPoint?.row === position.row && state?.koPoint?.col === position.col) return false;
+
+  const newBoard = board.map(row => [...row]);
+  newBoard[position.row][position.col] = currentPlayer;
+  const opponent = currentPlayer === 'black' ? 'white' : 'black';
+
+  let captured = 0;
+  for (const neighbor of getNeighbors(position, boardSize)) {
+    if (newBoard[neighbor.row][neighbor.col] === opponent) {
+      const group = getGroup(newBoard, neighbor, boardSize);
+      if (getLiberties(newBoard, group, boardSize) === 0) {
+        captured += group.length;
+        for (const stone of group) newBoard[stone.row][stone.col] = null;
+      }
+    }
+  }
+
+  if (captured === 0) {
+    const ownGroup = getGroup(newBoard, position, boardSize);
+    return getLiberties(newBoard, ownGroup, boardSize) > 0;
+  }
+  return true;
+}
+
+function legalAnalysisMoves(moves, state) {
+  return moves.filter(move => move.position === null || isLegalPosition(state, move.position));
+}
+
+function currentPlayerScoreLead(move, currentPlayer) {
+  return currentPlayer === 'black' ? move.scoreLead : -move.scoreLead;
+}
+
+function shouldResignFromAnalysis(analysis, state) {
+  const bestMove = analysis.moves[0];
+  if (!bestMove) return false;
+  const boardSize = state.boardSize;
+  const minMoves = Math.ceil(boardSize * boardSize * (RESIGN_CONFIG.minMoveFractions[boardSize] ?? 0.18));
+  if (state.moveRecords.length < minMoves) return false;
+  if (bestMove.winrate > RESIGN_CONFIG.minWinrate) return false;
+  return currentPlayerScoreLead(bestMove, state.currentPlayer) <= -(RESIGN_CONFIG.scoreDeficits[boardSize] ?? 50);
+}
+
+function pickAnalysisMove(moves, config, state) {
   const candidates = moves
     .filter(move => move.gtpMove && move.gtpMove.toLowerCase() !== 'resign')
+    .filter(move => move.position === null || isLegalPosition(state, move.position))
     .slice(0, config.topN);
   if (candidates.length === 0) return null;
   if (candidates.length === 1 || config.temperature <= 0) return candidates[0];
@@ -260,12 +364,19 @@ async function getMove(state, komi, difficulty = 'normal') {
   const difficultyConfig = getMoveDifficultyConfig(difficulty);
   if (difficultyConfig !== MOVE_DIFFICULTY_CONFIG.strongest) {
     const analysis = await getAnalysis(state, komi, difficultyConfig.durationMs);
-    const selectedMove = pickAnalysisMove(analysis.moves, difficultyConfig);
+    if (shouldResignFromAnalysis(analysis, state)) return 'resign';
+    const selectedMove = pickAnalysisMove(analysis.moves, difficultyConfig, state);
     if (selectedMove) return fromGtpCoord(selectedMove.gtpMove, boardSize);
   }
 
+  if (difficultyConfig === MOVE_DIFFICULTY_CONFIG.strongest) {
+    const analysis = await getAnalysis(state, komi, 700);
+    if (shouldResignFromAnalysis(analysis, state)) return 'resign';
+  }
+
   const rawMove = await sendGtp(`genmove ${toGtpColor(currentPlayer)}`, 120_000);
-  return fromGtpCoord(rawMove.split(/\s+/)[0], boardSize);
+  const move = fromGtpCoord(rawMove.split(/\s+/)[0], boardSize);
+  return move === 'resign' || move === null || isLegalPosition(state, move) ? move : null;
 }
 
 function parseAnalysis(rawStdout, boardSize) {
@@ -399,7 +510,7 @@ async function getAnalysis(state, komi, durationMs = 800) {
     katagoProcess.stdin.write('\n');
 
     const resultRaw = await analysisPromise;
-    const analyzedMoves = parseAnalysis(resultRaw, boardSize);
+    const analyzedMoves = legalAnalysisMoves(parseAnalysis(resultRaw, boardSize), state);
     return {
       currentPlayer,
       moves: analyzedMoves,
