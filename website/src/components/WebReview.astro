@@ -759,7 +759,7 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
   const passButton = document.getElementById("review-pass");
   passButton?.addEventListener("click", handlePass);
   const resignButton = document.getElementById("review-resign");
-  resignButton?.addEventListener("click", () => resignGame(white));
+  resignButton?.addEventListener("click", () => resignGame(playerColor));
   async function bootRuntime() {
     statusEl.textContent = "Starting TF.js engine...";
     await aiRuntime.init();
