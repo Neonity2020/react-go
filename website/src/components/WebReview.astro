@@ -436,12 +436,15 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     candidateList.innerHTML = "";
     const { blackScore, whiteScore, komi } = calculateScore();
     const diff = blackScore - whiteScore;
-    if (diff > 0) {
+    // Determine winner based on player color
+    const playerWins = playerColor === black ? diff > 0 : diff < 0;
+    const aiWins = playerColor === black ? diff < 0 : diff > 0;
+    if (playerWins) {
       statusEl.textContent = `Game over — You win! Black ${blackScore} vs White ${whiteScore} (komi ${komi})`;
-      pvEl.textContent = `🏆 Black wins by ${diff.toFixed(1)} points`;
-    } else if (diff < 0) {
+      pvEl.textContent = `🏆 You win by ${Math.abs(diff).toFixed(1)} points`;
+    } else if (aiWins) {
       statusEl.textContent = `Game over — You lose. Black ${blackScore} vs White ${whiteScore} (komi ${komi})`;
-      pvEl.textContent = `White wins by ${(-diff).toFixed(1)} points`;
+      pvEl.textContent = `AI wins by ${Math.abs(diff).toFixed(1)} points`;
     } else {
       statusEl.textContent = `Game over — Draw! Black ${blackScore} vs White ${whiteScore}`;
       pvEl.textContent = "Draw";
