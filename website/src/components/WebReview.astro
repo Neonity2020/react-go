@@ -1,0 +1,487 @@
+---
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
+---
+
+<section id="review" class="py-24 px-6 bg-bg-card/30" data-katago-model-url={katagoModelUrl}>
+  <div class="max-w-6xl mx-auto">
+    <div class="grid grid-cols-1 lg:grid-cols-[1.05fr_0.95fr] gap-10 items-center">
+      <div class="reveal">
+        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full border border-teal/25 bg-teal/10 text-teal-light text-sm font-medium mb-5">
+          <span class="h-2 w-2 rounded-full bg-teal-light"></span>
+          <span data-lang="en">Web KataGo mini match</span>
+          <span data-lang="zh">网页 KataGo 迷你对局</span>
+        </div>
+
+        <div data-lang="en">
+          <h2 class="text-3xl md:text-4xl font-bold mb-4">Play a few moves against KataGo in the browser</h2>
+          <p class="text-text-secondary leading-relaxed mb-6">
+            Try a lightweight 9×9 game directly on the web. Click the board to play black; a browser-based KataGo neural network engine (TensorFlow.js) answers as white, while the full-strength KataGo engine remains available in the desktop app.
+          </p>
+        </div>
+        <div data-lang="zh">
+          <h2 class="text-3xl md:text-4xl font-bold mb-4">在网页上与 KataGo 简单下几手</h2>
+          <p class="text-text-secondary leading-relaxed mb-6">
+            直接在网页端试玩轻量 9 路棋。点击棋盘执黑落子，内置 KataGo 神经网络引擎（TensorFlow.js）会执白回应；完整强度的 KataGo 引擎仍由桌面版提供。
+          </p>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-7">
+          <div class="rounded-xl border border-border bg-bg-card p-4">
+            <div class="text-2xl font-bold text-text-primary">9×9</div>
+            <div class="text-sm text-text-muted" data-lang="en">Quick browser game</div>
+            <div class="text-sm text-text-muted" data-lang="zh">网页快速对弈</div>
+          </div>
+          <div class="rounded-xl border border-border bg-bg-card p-4">
+            <div class="text-2xl font-bold text-text-primary">TF.js</div>
+            <div class="text-sm text-text-muted" data-lang="en">Local AI response</div>
+            <div class="text-sm text-text-muted" data-lang="zh">本地 AI 应手</div>
+          </div>
+          <div class="rounded-xl border border-border bg-bg-card p-4">
+            <div class="text-2xl font-bold text-text-primary">KataGo</div>
+            <div class="text-sm text-text-muted" data-lang="en">Full engine on desktop</div>
+            <div class="text-sm text-text-muted" data-lang="zh">桌面端完整引擎</div>
+          </div>
+        </div>
+
+        <div class="flex flex-col sm:flex-row gap-3">
+          <button
+            type="button"
+            id="review-new-game"
+            class="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-teal hover:bg-teal-light text-white font-semibold transition-all shadow-lg shadow-teal/20 cursor-pointer"
+          >
+            <span data-lang="en">New web game</span>
+            <span data-lang="zh">重新开始网页对局</span>
+          </button>
+          <a
+            href="https://github.com/Neonity2020/react-go/releases/latest"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl border border-border text-text-secondary hover:text-text-primary hover:border-text-muted font-medium transition-all"
+          >
+            <span data-lang="en">Download full desktop app</span>
+            <span data-lang="zh">下载完整桌面版</span>
+          </a>
+        </div>
+      </div>
+
+      <div class="reveal rounded-2xl border border-border bg-bg-card overflow-hidden shadow-2xl">
+        <div class="flex items-center justify-between gap-4 px-5 py-4 border-b border-border">
+          <div>
+            <div class="font-semibold" data-lang="en">Web Game</div>
+            <div class="font-semibold" data-lang="zh">网页对局</div>
+            <div id="webgpu-status" class="text-xs text-text-muted mt-1">Loading KataGo engine...</div>
+          </div>
+          <div class="px-3 py-1 rounded-full bg-teal/10 text-teal-light text-xs font-semibold">
+            <span data-lang="en">Move</span>
+            <span data-lang="zh">手数</span>
+            <span id="review-move">0</span>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-[1fr_220px] gap-0">
+          <div class="p-5">
+            <button
+              type="button"
+              id="review-board"
+              class="relative block w-full aspect-square rounded-xl overflow-hidden bg-wood-light shadow-inner cursor-crosshair"
+              aria-label="Play a move on the 9 by 9 Go board"
+            >
+              <svg viewBox="0 0 400 400" class="absolute inset-0 h-full w-full pointer-events-none">
+                <defs>
+                  <linearGradient id="reviewBoardGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                    <stop offset="0%" stop-color="#e7bf72" />
+                    <stop offset="100%" stop-color="#c89345" />
+                  </linearGradient>
+                  <radialGradient id="reviewBlackStone" cx="40%" cy="35%">
+                    <stop offset="0%" stop-color="#555" />
+                    <stop offset="100%" stop-color="#111" />
+                  </radialGradient>
+                  <radialGradient id="reviewWhiteStone" cx="35%" cy="30%">
+                    <stop offset="0%" stop-color="#fff" />
+                    <stop offset="80%" stop-color="#c8c4bc" />
+                  </radialGradient>
+                  <filter id="reviewStoneShadow">
+                    <feDropShadow dx="1" dy="2" stdDeviation="2" flood-opacity="0.3" />
+                  </filter>
+                </defs>
+                <rect width="400" height="400" fill="url(#reviewBoardGrad)" />
+                {Array.from({ length: 9 }, (_, i) => {
+                  const pos = 44 + i * 39;
+                  return (
+                    <>
+                      <line x1={pos} y1="44" x2={pos} y2="356" stroke="#8B6B2F" stroke-width="1" />
+                      <line x1="44" y1={pos} x2="356" y2={pos} stroke="#8B6B2F" stroke-width="1" />
+                    </>
+                  );
+                })}
+                {[2, 4, 6].map((x) =>
+                  [2, 4, 6].map((y) => (
+                    <circle cx={44 + x * 39} cy={44 + y * 39} r="3.5" fill="#8B6B2F" />
+                  ))
+                )}
+                <g id="review-candidates"></g>
+                <g id="review-stones"></g>
+                <circle id="review-hover" cx="-20" cy="-20" r="15" fill="rgba(17,17,17,0.22)" stroke="rgba(17,17,17,0.55)" stroke-width="1.5"></circle>
+              </svg>
+            </button>
+            <div class="mt-4 text-sm text-text-muted">
+              <span data-lang="en">You play black. Click an empty intersection; white responds automatically.</span>
+              <span data-lang="zh">你执黑。点击空交叉点落子，白棋会自动回应。</span>
+            </div>
+          </div>
+
+          <aside class="border-t md:border-t-0 md:border-l border-border p-5">
+            <div class="mb-6">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-sm text-text-secondary" data-lang="en">Black outlook</span>
+                <span class="text-sm text-text-secondary" data-lang="zh">黑棋形势</span>
+                <span id="review-winrate" class="text-sm font-semibold text-teal-light">50.0%</span>
+              </div>
+              <svg id="review-chart" viewBox="0 0 200 72" class="w-full h-20">
+                <path id="review-chart-fill" d="" fill="rgba(47, 118, 110, 0.18)"></path>
+                <path id="review-chart-line" d="" fill="none" stroke="#3a9189" stroke-width="3" stroke-linecap="round"></path>
+              </svg>
+            </div>
+
+            <div class="mb-6">
+              <h3 class="text-sm font-semibold mb-3" data-lang="en">AI candidate moves</h3>
+              <h3 class="text-sm font-semibold mb-3" data-lang="zh">AI 推荐着点</h3>
+              <div id="review-candidate-list" class="space-y-2"></div>
+            </div>
+
+            <div class="rounded-xl bg-bg-dark/60 border border-border p-4">
+              <div class="text-sm font-semibold mb-2" data-lang="en">Last move</div>
+              <div class="text-sm font-semibold mb-2" data-lang="zh">最近一手</div>
+              <div id="review-pv" class="text-sm text-text-secondary">Black to play</div>
+            </div>
+          </aside>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  import { createKatagoWebGpuRuntime } from "../lib/katago/workerRuntime";
+
+  const boardSize = 9;
+  const labels = "ABCDEFGHJ";
+  const empty = 0;
+  const black = 1;
+  const white = 2;
+  const boardOrigin = 44;
+  const gridStep = 39;
+  const initialMoves = [
+    { x: 4, y: 4, color: black },
+    { x: 2, y: 2, color: white },
+  ];
+
+  const aiRuntime = createKatagoWebGpuRuntime();
+  let boardState = new Int8Array(boardSize * boardSize);
+  let moveHistory = [];
+  let winrateHistory = [50];
+  let aiThinking = false;
+
+  const boardButton = document.getElementById("review-board");
+  const reviewSection = document.getElementById("review");
+  const katagoModelUrl = reviewSection?.dataset.katagoModelUrl || "";
+  const newGameButton = document.getElementById("review-new-game");
+  const statusEl = document.getElementById("webgpu-status");
+  const moveEl = document.getElementById("review-move");
+  const winrateEl = document.getElementById("review-winrate");
+  const stonesGroup = document.getElementById("review-stones");
+  const candidateGroup = document.getElementById("review-candidates");
+  const candidateList = document.getElementById("review-candidate-list");
+  const pvEl = document.getElementById("review-pv");
+  const chartLine = document.getElementById("review-chart-line");
+  const chartFill = document.getElementById("review-chart-fill");
+  const hoverStone = document.getElementById("review-hover");
+
+  function indexOf(x, y) {
+    return y * boardSize + x;
+  }
+
+  function xyFromIndex(index) {
+    return { x: index % boardSize, y: Math.floor(index / boardSize) };
+  }
+
+  function formatPoint(index) {
+    const { x, y } = xyFromIndex(index);
+    return `${labels[x]}${boardSize - y}`;
+  }
+
+  function pixelFor(value) {
+    return boardOrigin + value * gridStep;
+  }
+
+  function cloneBoard(board) {
+    return new Int8Array(board);
+  }
+
+  function neighbors(index) {
+    const { x, y } = xyFromIndex(index);
+    const result = [];
+    if (x > 0) result.push(index - 1);
+    if (x < boardSize - 1) result.push(index + 1);
+    if (y > 0) result.push(index - boardSize);
+    if (y < boardSize - 1) result.push(index + boardSize);
+    return result;
+  }
+
+  function groupAndLiberties(board, start) {
+    const color = board[start];
+    const group = [];
+    const liberties = new Set();
+    const seen = new Set([start]);
+    const queue = [start];
+
+    while (queue.length > 0) {
+      const current = queue.pop();
+      group.push(current);
+      neighbors(current).forEach((next) => {
+        if (board[next] === empty) {
+          liberties.add(next);
+        } else if (board[next] === color && !seen.has(next)) {
+          seen.add(next);
+          queue.push(next);
+        }
+      });
+    }
+
+    return { group, liberties };
+  }
+
+  function placeStone(board, index, color) {
+    if (board[index] !== empty) return null;
+
+    const nextBoard = cloneBoard(board);
+    const opponent = color === black ? white : black;
+    nextBoard[index] = color;
+
+    neighbors(index).forEach((next) => {
+      if (nextBoard[next] !== opponent) return;
+      const target = groupAndLiberties(nextBoard, next);
+      if (target.liberties.size === 0) {
+        target.group.forEach((stone) => {
+          nextBoard[stone] = empty;
+        });
+      }
+    });
+
+    const own = groupAndLiberties(nextBoard, index);
+    if (own.liberties.size === 0) return null;
+    return nextBoard;
+  }
+
+  function scoreMoveShape(board, index, color) {
+    const played = placeStone(board, index, color);
+    if (!played) return -1000;
+
+    const { x, y } = xyFromIndex(index);
+    const opponent = color === black ? white : black;
+    const center = 1 - (Math.abs(x - 4) + Math.abs(y - 4)) / 8;
+    const star = (x === 2 || x === 6) && (y === 2 || y === 6) ? 0.22 : 0;
+    const edgePenalty = x === 0 || y === 0 || x === 8 || y === 8 ? -0.18 : 0;
+    const contact = neighbors(index).reduce((sum, next) => {
+      if (board[next] === color) return sum + 0.14;
+      if (board[next] === opponent) return sum + 0.18;
+      return sum;
+    }, 0);
+    const liberties = groupAndLiberties(played, index).liberties.size * 0.08;
+    return center * 0.65 + star + edgePenalty + contact + liberties;
+  }
+
+  function summarize(scores, color) {
+    const candidates = Array.from(scores)
+      .map((score, index) => ({ index, score }))
+      .filter((entry) => entry.score > -1)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 4);
+    const total = candidates.reduce((sum, entry) => sum + Math.max(0.001, entry.score), 0) || 1;
+    const best = candidates[0]?.score ?? 0;
+    const stoneBalance = Array.from(boardState).reduce((sum, value) => {
+      if (value === black) return sum + 1;
+      if (value === white) return sum - 1;
+      return sum;
+    }, 0);
+    const blackOutlook = 50 + stoneBalance * 1.2 + (color === black ? best : -best) * 3;
+
+    return {
+      candidates: candidates.map((entry) => ({
+        ...entry,
+        point: formatPoint(entry.index),
+        percent: Math.max(5, Math.round((Math.max(0.001, entry.score) / total) * 100)),
+      })),
+      winrate: Math.max(30, Math.min(70, blackOutlook)),
+    };
+  }
+
+  function renderStones() {
+    stonesGroup.innerHTML = "";
+    boardState.forEach((color, index) => {
+      if (color === empty) return;
+      const { x, y } = xyFromIndex(index);
+      const stone = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      const isLast = moveHistory.at(-1)?.index === index;
+      stone.innerHTML = `
+        <circle cx="${pixelFor(x)}" cy="${pixelFor(y)}" r="16" fill="${color === black ? "url(#reviewBlackStone)" : "url(#reviewWhiteStone)"}" filter="url(#reviewStoneShadow)"></circle>
+        ${isLast ? `<circle cx="${pixelFor(x)}" cy="${pixelFor(y)}" r="5" fill="none" stroke="${color === black ? "white" : "#2f766e"}" stroke-width="2"></circle>` : ""}
+      `;
+      stonesGroup.appendChild(stone);
+    });
+  }
+
+  function renderChart() {
+    const points = winrateHistory.map((value, index) => {
+      const x = winrateHistory.length === 1 ? 0 : (index / (winrateHistory.length - 1)) * 200;
+      const y = 68 - ((value - 30) / 40) * 62;
+      return [x, Math.max(6, Math.min(68, y))];
+    });
+    const line = points.map(([x, y], index) => `${index === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
+    chartLine.setAttribute("d", line);
+    chartFill.setAttribute("d", `${line} L200 72 L0 72Z`);
+  }
+
+  function renderCandidates(candidates) {
+    candidateGroup.innerHTML = "";
+    candidateList.innerHTML = "";
+    candidates.forEach((candidate, index) => {
+      const { x, y } = xyFromIndex(candidate.index);
+      const radius = 18 - index * 2;
+      const marker = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      marker.innerHTML = `
+        <circle cx="${pixelFor(x)}" cy="${pixelFor(y)}" r="${radius}" fill="rgba(34,197,94,0.14)" stroke="#22c55e" stroke-width="2"></circle>
+        <text x="${pixelFor(x)}" y="${pixelFor(y) + 4}" text-anchor="middle" fill="#dcfce7" font-size="11" font-weight="700">${candidate.percent}%</text>
+      `;
+      candidateGroup.appendChild(marker);
+
+      const row = document.createElement("div");
+      row.className = "flex items-center justify-between rounded-lg bg-bg-dark/60 border border-border px-3 py-2";
+      row.innerHTML = `<span class="text-sm font-medium">${index + 1}. ${candidate.point}</span><span class="text-sm text-teal-light">${candidate.percent}%</span>`;
+      candidateList.appendChild(row);
+    });
+  }
+
+  async function updateAnalysis(color = black) {
+    const legalIndices = Array.from({ length: boardSize * boardSize }, (_, index) => index)
+      .filter((index) => placeStone(boardState, index, color));
+    const scores = await aiRuntime.analyze({
+      board: boardState,
+      color,
+      legalIndices,
+      moveCount: moveHistory.length,
+      moveHistory,
+    });
+    const result = summarize(scores, color);
+    winrateEl.textContent = `${result.winrate.toFixed(1)}%`;
+    winrateHistory.push(result.winrate);
+    renderCandidates(result.candidates);
+    renderChart();
+    return result;
+  }
+
+  function applyMove(index, color) {
+    const nextBoard = placeStone(boardState, index, color);
+    if (!nextBoard) return false;
+    boardState = nextBoard;
+    moveHistory.push({ index, color });
+    moveEl.textContent = String(moveHistory.length);
+    renderStones();
+    return true;
+  }
+
+  async function playAiMove() {
+    aiThinking = true;
+    boardButton.disabled = true;
+    statusEl.textContent = "KataGo thinking...";
+    const result = await updateAnalysis(white);
+    const response = result.candidates.find((candidate) => placeStone(boardState, candidate.index, white));
+
+    if (response) {
+      applyMove(response.index, white);
+      pvEl.textContent = `White answered at ${response.point}`;
+      statusEl.textContent = `${aiRuntime.engineLabel()} played white at ${response.point}`;
+      await updateAnalysis(black);
+    } else {
+      statusEl.textContent = "No legal AI move found";
+    }
+
+    boardButton.disabled = false;
+    aiThinking = false;
+  }
+
+  async function handleBoardClick(event) {
+    if (aiThinking) return;
+    const rect = boardButton.getBoundingClientRect();
+    const boardX = ((event.clientX - rect.left) / rect.width) * 400;
+    const boardY = ((event.clientY - rect.top) / rect.height) * 400;
+    const x = Math.round((boardX - boardOrigin) / gridStep);
+    const y = Math.round((boardY - boardOrigin) / gridStep);
+    if (x < 0 || x >= boardSize || y < 0 || y >= boardSize) return;
+
+    const index = indexOf(x, y);
+    if (!applyMove(index, black)) {
+      statusEl.textContent = "Illegal move: choose another point";
+      return;
+    }
+
+    pvEl.textContent = `Black played ${formatPoint(index)}`;
+    statusEl.textContent = `You played ${formatPoint(index)}`;
+    await playAiMove();
+  }
+
+  function handleBoardPointerMove(event) {
+    if (aiThinking) return;
+    const rect = boardButton.getBoundingClientRect();
+    const boardX = ((event.clientX - rect.left) / rect.width) * 400;
+    const boardY = ((event.clientY - rect.top) / rect.height) * 400;
+    const x = Math.round((boardX - boardOrigin) / gridStep);
+    const y = Math.round((boardY - boardOrigin) / gridStep);
+    if (x < 0 || x >= boardSize || y < 0 || y >= boardSize || boardState[indexOf(x, y)] !== empty) {
+      hoverStone.setAttribute("cx", "-20");
+      hoverStone.setAttribute("cy", "-20");
+      return;
+    }
+    hoverStone.setAttribute("cx", String(pixelFor(x)));
+    hoverStone.setAttribute("cy", String(pixelFor(y)));
+  }
+
+  function resetGame() {
+    boardState = new Int8Array(boardSize * boardSize);
+    moveHistory = [];
+    winrateHistory = [50];
+    initialMoves.forEach((move) => {
+      const index = indexOf(move.x, move.y);
+      boardState[index] = move.color;
+      moveHistory.push({ index, color: move.color });
+    });
+    moveEl.textContent = String(moveHistory.length);
+    pvEl.textContent = "Black to play";
+    statusEl.textContent = `${aiRuntime.engineLabel()} ready`;
+    renderStones();
+    renderChart();
+    updateAnalysis(black);
+  }
+
+  boardButton?.addEventListener("click", handleBoardClick);
+  boardButton?.addEventListener("pointermove", handleBoardPointerMove);
+  boardButton?.addEventListener("pointerleave", () => {
+    hoverStone.setAttribute("cx", "-20");
+    hoverStone.setAttribute("cy", "-20");
+  });
+  newGameButton?.addEventListener("click", resetGame);
+  async function bootRuntime() {
+    statusEl.textContent = "Starting TF.js engine...";
+    await aiRuntime.init();
+    statusEl.textContent = "Loading KataGo neural network...";
+    const model = katagoModelUrl ? await aiRuntime.loadModel(katagoModelUrl) : null;
+    if (model) {
+      statusEl.textContent = `${aiRuntime.engineLabel()} loaded · ${model.blocks} blocks/${model.channels} channels`;
+    } else {
+      statusEl.textContent = aiRuntime.engineLabel();
+    }
+  }
+
+  bootRuntime().finally(resetGame);
+</script>

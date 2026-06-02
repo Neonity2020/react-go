@@ -1,0 +1,5 @@
+.local/
+public/katago/*.gz
+public/katago/*.txt
+public/katago/*.bin.gz
+public/tfjs/

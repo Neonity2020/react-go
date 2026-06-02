@@ -3,7 +3,7 @@
 // Remove after June 1st by deleting this component and its import in index.astro
 ---
 
-<div class="childrens-day-banner">
+<div class="childrens-day-banner" id="childrens-day-banner">
   <div class="banner-inner">
     <div class="banner-emojis" aria-hidden="true">
       <span class="emoji float-1">🎈</span>
@@ -25,6 +25,8 @@
       <span class="emoji float-3">🪁</span>
       <span class="emoji float-1">🎈</span>
     </div>
+
+    <button class="banner-close" id="banner-close" aria-label="Close banner">&times;</button>
   </div>
 </div>
 
@@ -48,6 +50,27 @@
     justify-content: center;
     gap: 12px;
     position: relative;
+  }
+
+  .banner-close {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.8);
+    font-size: 1.25rem;
+    cursor: pointer;
+    padding: 4px 8px;
+    line-height: 1;
+    border-radius: 4px;
+    transition: color 0.2s, background 0.2s;
+  }
+
+  .banner-close:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.2);
   }
 
   .banner-content {
@@ -99,9 +122,31 @@
     to { transform: translateY(0); opacity: 1; }
   }
 
+  @keyframes slideUp {
+    from { transform: translateY(0); opacity: 1; }
+    to { transform: translateY(-100%); opacity: 0; }
+  }
+
+  .childrens-day-banner.closing {
+    animation: slideUp 0.3s ease-in forwards;
+    pointer-events: none;
+  }
+
   @media (max-width: 640px) {
     .banner-text { font-size: 0.95rem; }
     .banner-sub { font-size: 0.7rem; }
     .banner-emojis { display: none; }
   }
 </style>
+
+<script>
+  const banner = document.getElementById("childrens-day-banner");
+  const closeBtn = document.getElementById("banner-close");
+
+  closeBtn?.addEventListener("click", () => {
+    banner?.classList.add("closing");
+    banner?.addEventListener("animationend", () => {
+      banner?.remove();
+    }, { once: true });
+  });
+</script>

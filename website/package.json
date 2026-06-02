@@ -3,15 +3,24 @@
   "type": "module",
   "version": "1.0.0",
   "scripts": {
+    "fetch:model": "node scripts/fetch-katago-model.mjs",
+    "copy:wasm": "node scripts/copy-tfjs-wasm.mjs",
+    "predev": "npm run fetch:model && npm run copy:wasm",
+    "prebuild": "npm run fetch:model && npm run copy:wasm",
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview"
   },
   "dependencies": {
-    "astro": "^5.7.0"
+    "@tensorflow/tfjs": "^4.22.0",
+    "@tensorflow/tfjs-backend-wasm": "^4.22.0",
+    "@tensorflow/tfjs-backend-webgpu": "^4.22.0",
+    "astro": "^6.4.2",
+    "pako": "^2.1.0"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.0.0",
-    "tailwindcss": "^4.0.0"
+    "@tailwindcss/vite": "^4.3.0",
+    "tailwindcss": "^4.3.0",
+    "vite": "^7.3.5"
   }
 }

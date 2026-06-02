@@ -2,6 +2,7 @@ export const translations = {
   en: {
     nav: {
       features: "Features",
+      review: "Web Review",
       ai: "AI Analysis",
       download: "Download",
       github: "GitHub",
@@ -121,6 +122,7 @@ export const translations = {
   zh: {
     nav: {
       features: "功能特性",
+      review: "网页复盘",
       ai: "AI 分析",
       download: "下载",
       github: "GitHub",
