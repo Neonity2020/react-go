@@ -412,10 +412,10 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     candidateList.innerHTML = "";
     if (winner === black) {
       statusEl.textContent = "AI resigned — You win!";
-      pvEl.textContent = "🏆 AI (White) resigned";
+      pvEl.textContent = "🏆 You win!";
     } else {
       statusEl.textContent = "You resigned — AI wins";
-      pvEl.textContent = "AI (White) wins";
+      pvEl.textContent = "AI wins";
     }
   }
 
