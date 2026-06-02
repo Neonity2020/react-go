@@ -511,6 +511,7 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
   }
 
   function renderCandidates(candidates) {
+    if (!candidates || candidates.length === 0) return;
     candidateGroup.innerHTML = "";
     candidateList.innerHTML = "";
     candidates.forEach((candidate, index) => {
@@ -538,6 +539,10 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
         if (koPoint !== -1 && index === koPoint) return false;
         return true;
       });
+    // Debug
+    if (legalIndices.length === 0) {
+      statusEl.textContent = `No legal moves for ${color === black ? "black" : "white"}`;
+    }
     const scores = await aiRuntime.analyze({
       board: boardState,
       color,
@@ -546,6 +551,8 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
       moveHistory,
     });
     const result = summarize(scores, color);
+    // Debug
+    console.log(`updateAnalysis(${color === black ? "black" : "white"}): candidates=${result.candidates.length}`);
     winrateEl.textContent = `${result.winrate.toFixed(1)}%`;
     winrateHistory.push(result.winrate);
     renderCandidates(result.candidates);
