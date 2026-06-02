@@ -10,6 +10,12 @@ export type AnalyzeRequest = {
   moveHistory: Array<{ index: number; color: number }>;
 };
 
+export type AnalyzeResult = {
+  scores: Float32Array;
+  winrate: number;
+  error?: string;
+};
+
 export type RuntimeModel = {
   name: string;
   version: string;
@@ -25,7 +31,7 @@ export type RuntimeModel = {
 export type KatagoWebGpuRuntime = {
   init: () => Promise<void>;
   loadModel: (url: string) => Promise<RuntimeModel | null>;
-  analyze: (request: AnalyzeRequest) => Promise<Float32Array>;
+  analyze: (request: AnalyzeRequest) => Promise<AnalyzeResult>;
   engineLabel: () => string;
   hasWebGpu: () => boolean;
   model: () => RuntimeModel | null;

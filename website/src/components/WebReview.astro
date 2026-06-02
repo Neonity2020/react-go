@@ -224,6 +224,11 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
   let playerColor: Stone = BLACK;
   let aiColor: Stone = WHITE;
   let moveNumber = 0;
+  let aiThinking = false;
+  let modelReady = false;
+  let modelError = "";
+  let moveHistory: Array<{ index: number; color: number }> = [];
+  let winrateHistory: number[] = [50];
 
   function createEmptyBoard(): Board {
     return Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(EMPTY));
@@ -257,65 +262,37 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
   }
 
   // ============ Go Engine (from engine.ts) ============
-  function getGroup(pos: Position): Position[] {
-    const stone = board[pos.row][pos.col];
-    if (!stone) return [];
-
-    const visited = new Set<string>();
-    const group: Position[] = [];
-    const queue: Position[] = [pos];
-
-    while (queue.length > 0) {
-      const curr = queue.pop()!;
-      const key = posKey(curr);
-      if (visited.has(key)) continue;
-      visited.add(key);
-      group.push(curr);
-
-      for (const neighbor of getNeighbors(curr)) {
-        const nKey = posKey(neighbor);
-        if (!visited.has(nKey) && board[neighbor.row][neighbor.col] === stone) {
-          queue.push(neighbor);
-        }
-      }
-    }
-    return group;
-  }
-
-  function getLiberties(group: Position[]): number {
-    const libertySet = new Set<string>();
-    for (const pos of group) {
-      for (const neighbor of getNeighbors(pos)) {
-        if (board[neighbor.row][neighbor.col] === EMPTY) {
-          libertySet.add(posKey(neighbor));
-        }
-      }
-    }
-    return libertySet.size;
-  }
-
-  function isValidMove(pos: Position): boolean {
+  function simulateMove(pos: Position, player: Stone): {
+    valid: boolean;
+    nextBoard: Board;
+    capturedCount: number;
+    capturedSingle: Position | null;
+    nextKoPoint: Position | null;
+  } {
     const { row, col } = pos;
 
-    // Bounds check
-    if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) return false;
-    // Occupied check
-    if (board[row][col] !== EMPTY) return false;
-    // Ko check
-    if (koPoint && koPoint.row === row && koPoint.col === col) return false;
+    if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) {
+      return { valid: false, nextBoard: board, capturedCount: 0, capturedSingle: null, nextKoPoint: null };
+    }
+    if (board[row][col] !== EMPTY) {
+      return { valid: false, nextBoard: board, capturedCount: 0, capturedSingle: null, nextKoPoint: null };
+    }
+    if (koPoint && koPoint.row === row && koPoint.col === col) {
+      return { valid: false, nextBoard: board, capturedCount: 0, capturedSingle: null, nextKoPoint: null };
+    }
 
-    // Simulate move
     const newBoard = cloneBoard(board);
-    newBoard[row][col] = currentPlayer;
-    const opponent: Stone = currentPlayer === BLACK ? WHITE : BLACK;
+    newBoard[row][col] = player;
+    const opponent: Stone = player === BLACK ? WHITE : BLACK;
 
-    // Check captures
-    let captured = 0;
+    let capturedCount = 0;
+    let capturedSingle: Position | null = null;
     for (const neighbor of getNeighbors(pos)) {
       if (newBoard[neighbor.row][neighbor.col] === opponent) {
-        const group = getGroup(neighbor);
+        const group = getGroupWithBoard(newBoard, neighbor);
         if (getLibertiesWithBoard(newBoard, group) === 0) {
-          captured += group.length;
+          capturedCount += group.length;
+          if (group.length === 1) capturedSingle = group[0];
           for (const p of group) {
             newBoard[p.row][p.col] = EMPTY;
           }
@@ -323,15 +300,21 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
       }
     }
 
-    // Suicide check (only if no captures)
-    if (captured === 0) {
-      const ownGroup = getGroupWithBoard(newBoard, pos);
-      if (getLibertiesWithBoard(newBoard, ownGroup) === 0) {
-        return false;
-      }
+    const ownGroup = getGroupWithBoard(newBoard, pos);
+    if (getLibertiesWithBoard(newBoard, ownGroup) === 0) {
+      return { valid: false, nextBoard: board, capturedCount: 0, capturedSingle: null, nextKoPoint: null };
     }
 
-    return true;
+    let nextKoPoint: Position | null = null;
+    if (capturedCount === 1 && capturedSingle && ownGroup.length === 1 && getLibertiesWithBoard(newBoard, ownGroup) === 1) {
+      nextKoPoint = capturedSingle;
+    }
+
+    return { valid: true, nextBoard: newBoard, capturedCount, capturedSingle, nextKoPoint };
+  }
+
+  function isValidMove(pos: Position, player: Stone = currentPlayer): boolean {
+    return simulateMove(pos, player).valid;
   }
 
   // Helper functions that take board as parameter
@@ -372,11 +355,11 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     return libertySet.size;
   }
 
-  function getLegalMoves(): Position[] {
+  function getLegalMoves(player: Stone = currentPlayer): Position[] {
     const moves: Position[] = [];
     for (let r = 0; r < BOARD_SIZE; r++) {
       for (let c = 0; c < BOARD_SIZE; c++) {
-        if (isValidMove({ row: r, col: c })) {
+        if (isValidMove({ row: r, col: c }, player)) {
           moves.push({ row: r, col: c });
         }
       }
@@ -384,43 +367,65 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     return moves;
   }
 
+  function chooseFallbackMove(moves: Position[], player: Stone): Position | null {
+    if (moves.length === 0) return null;
+
+    const opponent = player === BLACK ? WHITE : BLACK;
+    let bestMove = moves[0];
+    let bestScore = -Infinity;
+
+    for (const pos of moves) {
+      const move = simulateMove(pos, player);
+      if (!move.valid) continue;
+
+      let score = move.capturedCount * 80;
+      const edgeDistance = Math.min(pos.row, pos.col, BOARD_SIZE - 1 - pos.row, BOARD_SIZE - 1 - pos.col);
+      score += edgeDistance * 8;
+      score -= Math.abs(pos.row - 4) + Math.abs(pos.col - 4);
+
+      for (const neighbor of getNeighbors(pos)) {
+        if (board[neighbor.row][neighbor.col] === player) score += 6;
+        if (board[neighbor.row][neighbor.col] === opponent) score += 3;
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestMove = pos;
+      }
+    }
+
+    return bestMove;
+  }
+
+  function playAiFallbackMove(label = "fallback"): boolean {
+    if (gameOver || currentPlayer !== aiColor) return false;
+
+    const legalMoves = getLegalMoves(aiColor);
+    const fallback = chooseFallbackMove(legalMoves, aiColor);
+    if (fallback) {
+      placeStone(fallback);
+      statusEl.textContent = `AI: ${formatPoint(fallback)} · ${label}`;
+      pvEl.textContent = `AI: ${formatPoint(fallback)} · ${label}`;
+      return true;
+    }
+
+    passMove();
+    statusEl.textContent = "AI passed";
+    pvEl.textContent = "AI passed";
+    return true;
+  }
+
   function placeStone(pos: Position): boolean {
     if (gameOver) return false;
-    if (!isValidMove(pos)) return false;
-
-    const newBoard = cloneBoard(board);
-    newBoard[pos.row][pos.col] = currentPlayer;
+    const move = simulateMove(pos, currentPlayer);
+    if (!move.valid) return false;
     const opponent: Stone = currentPlayer === BLACK ? WHITE : BLACK;
 
-    // Remove captured stones
-    let capturedCount = 0;
-    let capturedSingle: Position | null = null;
-    for (const neighbor of getNeighbors(pos)) {
-      if (newBoard[neighbor.row][neighbor.col] === opponent) {
-        const group = getGroupWithBoard(newBoard, neighbor);
-        if (getLibertiesWithBoard(newBoard, group) === 0) {
-          capturedCount += group.length;
-          if (group.length === 1) capturedSingle = neighbor;
-          for (const p of group) {
-            newBoard[p.row][p.col] = EMPTY;
-          }
-        }
-      }
-    }
-
-    // Ko detection
-    let newKoPoint: Position | null = null;
-    if (capturedCount === 1 && capturedSingle) {
-      const ownGroup = getGroupWithBoard(newBoard, pos);
-      if (ownGroup.length === 1 && getLibertiesWithBoard(newBoard, ownGroup) === 1) {
-        newKoPoint = capturedSingle;
-      }
-    }
-
-    board = newBoard;
-    koPoint = newKoPoint;
+    board = move.nextBoard;
+    koPoint = move.nextKoPoint;
     lastMove = pos;
     passCount = 0;
+    moveHistory.push({ index: pos.row * BOARD_SIZE + pos.col, color: currentPlayer === BLACK ? 1 : 2 });
     currentPlayer = opponent;
     moveNumber++;
 
@@ -510,7 +515,7 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
         const isLast = lastMove?.row === r && lastMove?.col === c;
         stonesGroup.innerHTML += `
           <circle cx="${pixelFor(c)}" cy="${pixelFor(r)}" r="16"
-            fill="${stone === BLACK ? "url(#reviewBlackStone)" : "url(#reviewWhiteStone)"}
+            fill="${stone === BLACK ? "url(#reviewBlackStone)" : "url(#reviewWhiteStone)"}"
             filter="url(#reviewStoneShadow)"></circle>
           ${isLast ? `<circle cx="${pixelFor(c)}" cy="${pixelFor(r)}" r="5"
             fill="none" stroke="${stone === BLACK ? "white" : "#2f766e"}" stroke-width="2"></circle>` : ''}
@@ -542,6 +547,26 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     });
   }
 
+  function renderWinrateChart(): void {
+    if (winrateHistory.length < 2) {
+      chartLine.setAttribute("d", "");
+      chartFill.setAttribute("d", "");
+      return;
+    }
+
+    const maxX = 200;
+    const maxY = 72;
+    const points = winrateHistory.map((winrate, i) => {
+      const x = winrateHistory.length === 1 ? 0 : (i / (winrateHistory.length - 1)) * maxX;
+      const y = maxY - (Math.max(0, Math.min(100, winrate)) / 100) * maxY;
+      return { x, y };
+    });
+    const line = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" ");
+    const fill = `${line} L ${maxX} ${maxY} L 0 ${maxY} Z`;
+    chartLine.setAttribute("d", line);
+    chartFill.setAttribute("d", fill);
+  }
+
   function updateUI(): void {
     moveEl.textContent = String(moveNumber);
 
@@ -559,23 +584,32 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
         statusEl.textContent = `You lose. ${score.blackScore} vs ${score.whiteScore.toFixed(1)}`;
         pvEl.textContent = "AI wins";
       }
+    } else if (aiThinking) {
+      statusEl.textContent = "AI thinking...";
+      pvEl.textContent = "AI thinking...";
     } else if (currentPlayer === playerColor) {
-      statusEl.textContent = "Your turn";
-      pvEl.textContent = "Your turn";
+      statusEl.textContent = modelReady ? "Your turn" : "Your turn · fallback AI";
     } else {
       statusEl.textContent = "AI thinking...";
     }
 
     renderStones();
+    renderWinrateChart();
   }
 
   // ============ AI Logic ============
   async function aiMove(): Promise<void> {
-    if (gameOver || currentPlayer !== aiColor) return;
+    if (gameOver || currentPlayer !== aiColor || aiThinking) return;
+
+    aiThinking = true;
+    boardButton.disabled = true;
+    updateUI();
 
     const legalMoves = getLegalMoves();
     if (legalMoves.length === 0) {
       passMove();
+      aiThinking = false;
+      boardButton.disabled = false;
       updateUI();
       return;
     }
@@ -590,33 +624,60 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     }
 
     const moveIndices = legalMoves.map(p => p.row * BOARD_SIZE + p.col);
-    const scores = await aiRuntime.analyze({
-      board: boardFlat,
-      color: aiColor === BLACK ? 1 : 2,
-      legalIndices: moveIndices,
-      moveCount: moveNumber,
-      moveHistory: [],
-    });
-
-    // Find best move
-    let bestIdx = 0;
-    let bestScore = scores[moveIndices[0]];
-    for (let i = 1; i < moveIndices.length; i++) {
-      if (scores[moveIndices[i]] > bestScore) {
-        bestScore = scores[moveIndices[i]];
-        bestIdx = i;
+    try {
+      if (!modelReady) {
+        throw new Error(modelError || "KataGo model not ready");
       }
-    }
 
-    if (bestScore > 0) {
-      const bestPos = legalMoves[bestIdx];
-      placeStone(bestPos);
-      statusEl.textContent = `AI: ${formatPoint(bestPos)}`;
-      pvEl.textContent = `AI: ${formatPoint(bestPos)}`;
-    } else {
-      passMove();
-      statusEl.textContent = "AI passed";
-      pvEl.textContent = "AI passed";
+      const analysis = await Promise.race([
+        aiRuntime.analyze({
+          board: boardFlat,
+          color: aiColor === BLACK ? 1 : 2,
+          legalIndices: moveIndices,
+          moveCount: moveNumber,
+          moveHistory,
+        }),
+        new Promise<Awaited<ReturnType<typeof aiRuntime.analyze>>>((_, reject) => {
+          window.setTimeout(() => reject(new Error("KataGo analysis timed out")), 5000);
+        }),
+      ]);
+      if (analysis.error) {
+        throw new Error(analysis.error);
+      }
+      const { scores } = analysis;
+
+      const blackWinrate = aiColor === BLACK ? analysis.winrate : 100 - analysis.winrate;
+      winrateHistory.push(blackWinrate);
+      winrateEl.textContent = `${blackWinrate.toFixed(1)}%`;
+
+      const rankedMoves = legalMoves
+        .map((pos) => ({ pos, score: scores[pos.row * BOARD_SIZE + pos.col] }))
+        .sort((a, b) => b.score - a.score);
+
+      const topScore = rankedMoves[0]?.score ?? 0;
+      const expScores = rankedMoves.slice(0, 4).map((m) => Math.exp(Math.max(-20, Math.min(20, m.score - topScore))));
+      const expSum = expScores.reduce((sum, value) => sum + value, 0) || 1;
+      renderCandidates(rankedMoves.slice(0, 4).map((m, i) => ({
+        pos: m.pos,
+        winrate: (expScores[i] / expSum) * 100,
+      })));
+
+      const bestPos = rankedMoves[0]?.pos ?? chooseFallbackMove(legalMoves, aiColor);
+      if (bestPos) {
+        placeStone(bestPos);
+        statusEl.textContent = `AI: ${formatPoint(bestPos)}`;
+        pvEl.textContent = `AI: ${formatPoint(bestPos)}`;
+      } else {
+        passMove();
+        statusEl.textContent = "AI passed";
+        pvEl.textContent = "AI passed";
+      }
+    } catch (err) {
+      playAiFallbackMove();
+      console.warn("KataGo web move failed:", err);
+    } finally {
+      aiThinking = false;
+      boardButton.disabled = false;
     }
 
     updateUI();
@@ -624,7 +685,7 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
 
   // ============ Event Handlers ============
   async function handleBoardClick(event: MouseEvent): Promise<void> {
-    if (gameOver || currentPlayer !== playerColor) return;
+    if (gameOver || aiThinking || currentPlayer !== playerColor) return;
 
     const rect = boardButton.getBoundingClientRect();
     const boardX = ((event.clientX - rect.left) / rect.width) * 400;
@@ -650,7 +711,7 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
   }
 
   async function handlePass(): Promise<void> {
-    if (gameOver || currentPlayer !== playerColor) return;
+    if (gameOver || aiThinking || currentPlayer !== playerColor) return;
 
     passMove();
     pvEl.textContent = "You passed";
@@ -695,6 +756,9 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     playerColor = BLACK;
     aiColor = WHITE;
     moveNumber = 0;
+    aiThinking = false;
+    moveHistory = [];
+    winrateHistory = [50];
 
     boardButton.disabled = false;
     candidateGroup.innerHTML = "";
@@ -723,9 +787,14 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     statusEl.textContent = "Loading model...";
     const model = katagoModelUrl ? await aiRuntime.loadModel(katagoModelUrl) : null;
     if (model) {
+      modelReady = true;
+      modelError = "";
       statusEl.textContent = `${aiRuntime.engineLabel()} loaded`;
     } else {
-      statusEl.textContent = aiRuntime.engineLabel();
+      modelReady = false;
+      modelError = aiRuntime.engineLabel();
+      statusEl.textContent = modelError;
+      pvEl.textContent = modelError;
     }
     resetGame();
   }

@@ -5,6 +5,7 @@ import type {
   KatagoWebGpuRuntime,
   RuntimeModel,
   AnalyzeRequest,
+  AnalyzeResult,
   WorkerRequest,
   WorkerResponse,
 } from "./types";
@@ -86,7 +87,7 @@ export function createKatagoWebGpuRuntime(): KatagoWebGpuRuntime {
     }
   }
 
-  async function analyze(request: AnalyzeRequest): Promise<Float32Array> {
+  async function analyze(request: AnalyzeRequest): Promise<AnalyzeResult> {
     const result = await postToWorker({
       type: "analyze",
       board: request.board,
@@ -99,13 +100,11 @@ export function createKatagoWebGpuRuntime(): KatagoWebGpuRuntime {
     if (result.type === "analyze_result") {
       if (result.error) {
         console.warn("KataGo analyze error:", result.error);
-        return new Float32Array(81);
+        return { scores: result.scores, winrate: result.winrate, error: result.error };
       }
-      // Store winrate for later retrieval via the return value
-      // The caller (WebReview.astro) will use the scores directly
-      return result.scores;
+      return { scores: result.scores, winrate: result.winrate };
     }
-    return new Float32Array(81);
+    return { scores: new Float32Array(81), winrate: 50, error: "Unexpected worker response" };
   }
 
   function engineLabel(): string {
