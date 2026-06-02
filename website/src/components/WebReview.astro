@@ -597,6 +597,11 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
       }
     } else {
       // No legal moves available - pass
+      // Check if AI should resign based on winrate
+      if (result.winrate < 10) {
+        resignGame(aiColor);
+        return;
+      }
       passCount++;
       if (checkGameEnd()) {
         endGame();
