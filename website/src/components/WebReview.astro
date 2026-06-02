@@ -615,9 +615,9 @@ const katagoModelUrl = `${base}/katago/katago-small.bin.gz`;
     if (komiSwapPositions.length === 1) {
       statusEl.textContent = "Place second stone";
     } else if (komiSwapPositions.length === 2) {
-      const playerIsWhite = Math.random() < 0.5;
       gamePhase = "playing";
       komiSwapHint.style.display = "none";
+      const playerIsWhite = Math.random() < 0.5;
       if (playerIsWhite) {
         playerColor = white;
         aiColor = black;
